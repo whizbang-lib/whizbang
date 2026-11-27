@@ -13,11 +13,17 @@ namespace Whizbang.Core.Perspectives;
 /// Vector fields are always stored as physical columns (implicit <see cref="PhysicalFieldAttribute"/>).
 /// </para>
 /// <para>
+/// On an event's property it marks a vector of the stored event body instead (#2625): besides <c>float[]</c> and
+/// <c>IReadOnlyList&lt;float&gt;</c>, which are vectors there unmarked, a <c>List&lt;float&gt;</c> or a
+/// <c>ReadOnlyMemory&lt;float&gt;</c> marked with it is stored packed binary32. No pgvector package is needed for that.
+/// </para>
+/// <para>
 /// For optimal performance with large datasets, enable indexing with either IVFFlat or HNSW.
 /// HNSW provides better recall but uses more memory; IVFFlat is faster to build.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/vector-fields</docs>
+/// <docs>data/event-store#packed-vectors</docs>
 /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/VectorFieldAttributeTests.cs</tests>
 /// <example>
 /// <code>

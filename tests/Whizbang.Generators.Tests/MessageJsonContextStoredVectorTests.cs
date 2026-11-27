@@ -229,6 +229,35 @@ public class MessageJsonContextStoredVectorTests {
 
   [Test]
   [RequiresAssemblyFiles]
+  public async Task Generator_AListOrMemoryOfFloat_MarkedAsAVectorField_GetsItsConverterAndAPathAsync() {
+    var (context, initializer, _) = await _generateAsync("""
+      public record PassageEmbedded(
+          Guid Id,
+          [property: Whizbang.Core.Perspectives.VectorField(3)] List<float> Listed,
+          [property: Whizbang.Core.Perspectives.VectorField(3)] ReadOnlyMemory<float> Memory) : IEvent;
+      """);
+
+    await Assert.That(_converterFor(context, "Listed")).IsEqualTo("ForList");
+    await Assert.That(_converterFor(context, "Memory")).IsEqualTo("ForReadOnlyMemory");
+    await Assert.That(_registrationFor(initializer, "PassageEmbedded")).IsEqualTo("""["Listed"], ["Memory"]""");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_AListOrMemoryOfFloat_NotMarkedAsAVectorField_IsLeftAloneAsync() {
+    var (context, initializer, _) = await _generateAsync("""
+      public record Measured(Guid Id, List<float> Listed, ReadOnlyMemory<float> Memory,
+          [property: Whizbang.Core.Perspectives.VectorField(3)] List<double> Doubles,
+          [property: Whizbang.Core.Perspectives.VectorField(3)][property: StoredAsJsonArray] List<float> OptedOut) : IEvent;
+      """);
+
+    await Assert.That(context).DoesNotContain("StoredVectorConverters")
+      .Because("a List<float> or ReadOnlyMemory<float> is a vector only when it is marked [VectorField], a list of doubles never is, and the opt-out still wins");
+    await Assert.That(_registrationFor(initializer, "Measured")).IsNull();
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
   public async Task Generator_TheStoredVectorCode_CompilesAsync() {
     var errors = GeneratorTestHelper.GetGeneratedCompilationErrors([new MessageJsonContextGenerator(), new WhizbangIdGenerator()], HEADER + """
 
@@ -239,6 +268,9 @@ public class MessageJsonContextStoredVectorTests {
         public IReadOnlyList<float> Alternate { get; init; } = [];
       }
       public record PassageStored(Guid Id, Passage Passage) : IEvent;
+      public record PassageListed(Guid Id,
+          [property: Whizbang.Core.Perspectives.VectorField(3)] List<float> Listed,
+          [property: Whizbang.Core.Perspectives.VectorField(3)] ReadOnlyMemory<float> Memory) : IEvent;
       """);
 
     await Assert.That(errors).IsEmpty();

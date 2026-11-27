@@ -45,6 +45,27 @@ public sealed record StoredVectorPassageEmbeddedEvent : IEvent {
   public List<StoredVectorChunk> Chunks { get; init; } = [];
 }
 
+/// <summary>
+/// An event with the vector forms that count only when marked <see cref="VectorFieldAttribute"/> (owner decision on
+/// #2624): a <c>List&lt;float&gt;</c> and a <c>ReadOnlyMemory&lt;float&gt;</c>. The unmarked list is not a vector.
+/// </summary>
+public sealed record StoredVectorMarkedFormsEvent : IEvent {
+  /// <summary>The stream.</summary>
+  [StreamId]
+  public Guid PassageId { get; init; }
+
+  /// <summary>A list marked as a vector field: packed.</summary>
+  [VectorField(3)]
+  public List<float> Listed { get; init; } = [];
+
+  /// <summary>Memory marked as a vector field: packed.</summary>
+  [VectorField(3)]
+  public ReadOnlyMemory<float> Memory { get; init; }
+
+  /// <summary>A list not marked: left alone.</summary>
+  public List<float> Plain { get; init; } = [];
+}
+
 /// <summary>A second event, to show a positional record's vector registers too.</summary>
 /// <param name="PassageId">The stream.</param>
 /// <param name="Query">The vector.</param>
@@ -140,7 +161,36 @@ public class StoredVectorEventReadTests {
   private static readonly Dictionary<Type, object> _samples = new() {
     [typeof(StoredVectorPassageEmbeddedEvent)] = _passage(),
     [typeof(StoredVectorQueryRecordedEvent)] = new StoredVectorQueryRecordedEvent(Guid.CreateVersion7(), [0.5f, -1f]),
+    [typeof(StoredVectorMarkedFormsEvent)] = _marked(),
   };
+
+  private static StoredVectorMarkedFormsEvent _marked() => new() {
+    PassageId = Guid.CreateVersion7(),
+    Listed = [0.1f, -0.0f, float.MaxValue],
+    Memory = new float[] { float.Epsilon, -2.5f },
+    Plain = [3f, 4f],
+  };
+
+  [Test]
+  [Arguments(SerializationProfile.Default)]
+  [Arguments(SerializationProfile.Persistence)]
+  public async Task MarkedListAndMemoryVectors_ArePathsThatReadBackBitExact_AndAnUnmarkedListIsNotAsync(SerializationProfile profile) {
+    var options = JsonContextRegistry.CreateCombinedOptions(profile);
+    var written = _marked();
+    var registered = StoredVectorPaths.For(typeof(StoredVectorMarkedFormsEvent)).Select(static p => p.ToArray()).ToArray();
+    var packed = _packAt(JsonSerializer.Serialize(written, options), registered);
+
+    var read = JsonSerializer.Deserialize<StoredVectorMarkedFormsEvent>(packed, options)!;
+    var plainPacked = JsonNode.Parse(JsonSerializer.Serialize(written, options))!;
+    plainPacked["Plain"] = StoredVectorConvertersTests.Pack(3f, 4f);
+
+    await Assert.That(string.Join(" ", registered.Select(static p => string.Join("/", p)).Order(StringComparer.Ordinal))).IsEqualTo("Listed Memory");
+    await Assert.That(_bits(read.Listed)).IsEquivalentTo(_bits(written.Listed));
+    await Assert.That(_bits(read.Memory.ToArray())).IsEquivalentTo(_bits(written.Memory.ToArray()));
+    await Assert.That(read.Plain).IsEquivalentTo(written.Plain);
+    await Assert.That(() => JsonSerializer.Deserialize<StoredVectorMarkedFormsEvent>(plainPacked.ToJsonString(), options))
+      .Throws<JsonException>().Because("an unmarked List<float> is not a vector, so it has no packed reader");
+  }
 
   [Test]
   public async Task TheGeneratedRegistration_ListsEachVectorPath_ByItsJsonNamesAsync() {

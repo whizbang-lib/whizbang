@@ -23,6 +23,7 @@ namespace Whizbang.Generators;
 public class VectorDependencyAnalyzer : DiagnosticAnalyzer {
   private const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
   private const string PGVECTOR_ASSEMBLY_NAME = "Pgvector.EntityFrameworkCore";
+  private const string EVENT_INTERFACE = "Whizbang.Core.IEvent";
 
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
@@ -57,6 +58,11 @@ public class VectorDependencyAnalyzer : DiagnosticAnalyzer {
 
   private static void _analyzeProperty(SymbolAnalysisContext context) {
     var propertySymbol = (IPropertySymbol)context.Symbol;
+
+    // #2625: on an event, [VectorField] marks a vector of the stored body, not a pgvector column: no package is needed.
+    if (propertySymbol.ContainingType.AllInterfaces.Any(static i => TypeNameUtilities.IsNamed(i, EVENT_INTERFACE))) {
+      return;
+    }
 
     // Check if property has [VectorField] attribute
     foreach (var attribute in propertySymbol.GetAttributes()) {

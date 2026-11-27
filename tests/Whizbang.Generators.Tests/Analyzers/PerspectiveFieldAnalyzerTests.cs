@@ -16,6 +16,36 @@ namespace Whizbang.Generators.Tests.Analyzers;
 /// <code-under-test>src/Whizbang.Generators/Analyzers/PerspectiveFieldAnalyzer.cs</code-under-test>
 public class PerspectiveFieldAnalyzerTests {
   [Test]
+  [Arguments("System.Collections.Generic.List<float>")]
+  [Arguments("System.ReadOnlyMemory<float>")]
+  [Arguments("System.Collections.Generic.IReadOnlyList<float>")]
+  public async Task AVectorFieldOnAnEventsListOrMemoryOfFloat_IsNotReported_ItMarksAStoredVectorAsync(string type) {
+    var source = $$"""
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      namespace App;
+      public record Embedded : IEvent { [VectorField(3)] public {{type}} Embedding { get; init; } }
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFieldAnalyzer>(source);
+
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ801")).IsEqualTo(0)
+      .Because("on an event, [VectorField] marks a List<float> or ReadOnlyMemory<float> as a vector of the stored body (#2625)");
+  }
+
+  [Test]
+  public async Task AVectorFieldOnAnEventsListOfDouble_IsStillReportedAsync() {
+    const string source = """
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      namespace App;
+      public record Embedded : IEvent { [VectorField(3)] public System.Collections.Generic.List<double> Embedding { get; init; } = []; }
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFieldAnalyzer>(source);
+
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ801")).IsEqualTo(1);
+  }
+
+  [Test]
   public async Task AVectorFieldOnFloatArray_IsNotReportedAsync() {
     const string source = """
       using Whizbang.Core.Perspectives;

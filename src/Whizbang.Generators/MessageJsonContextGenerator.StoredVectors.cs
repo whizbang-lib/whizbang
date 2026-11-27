@@ -30,6 +30,7 @@ internal sealed record StoredVectorDiscovery(
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextStoredVectorTests.cs</tests>
 public partial class MessageJsonContextGenerator {
   private const string STORED_AS_JSON_ARRAY_ATTRIBUTE = "Whizbang.Core.Attributes.StoredAsJsonArrayAttribute";
+  private const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
   private const string PLACEHOLDER_VECTOR_FACTORY = "__VECTOR_FACTORY__";
   private const string PLACEHOLDER_VECTOR_TYPE = "__VECTOR_TYPE__";
   private const string PLACEHOLDER_VECTOR_PATHS = "__VECTOR_PATHS__";
@@ -38,24 +39,31 @@ public partial class MessageJsonContextGenerator {
   private const string REASON_CYCLE = "its type refers back to itself, so the path has no fixed depth";
 
   /// <summary>
-  /// Which vector type <paramref name="property"/> is: a <c>float[]</c> or an <c>IReadOnlyList&lt;float&gt;</c> not
-  /// marked <c>[StoredAsJsonArray]</c>. Every other type, <c>double[]</c> and <c>float?[]</c> among them, is not: its
-  /// values do not fit binary32 exactly, or it is not one of the plan's vector types.
+  /// Which vector type <paramref name="property"/> is, unless it is marked <c>[StoredAsJsonArray]</c>: a
+  /// <c>float[]</c> or an <c>IReadOnlyList&lt;float&gt;</c> always, and a <c>List&lt;float&gt;</c> or a
+  /// <c>ReadOnlyMemory&lt;float&gt;</c> only when it is marked <c>[VectorField]</c> (owner decision on #2624: an
+  /// unmarked list or memory of floats is an ordinary collection). Every other type, <c>double[]</c> and
+  /// <c>float?[]</c> among them, is not: its values do not fit binary32 exactly, or it is not one of the vector types.
   /// </summary>
   private static StoredVectorForm _storedVectorForm(IPropertySymbol property) {
-    if (property.GetAttributes().Any(static a => TypeNameUtilities.IsNamed(a.AttributeClass, STORED_AS_JSON_ARRAY_ATTRIBUTE))) {
+    var attributes = property.GetAttributes();
+    if (attributes.Any(static a => TypeNameUtilities.IsNamed(a.AttributeClass, STORED_AS_JSON_ARRAY_ATTRIBUTE))) {
       return StoredVectorForm.None;
     }
+    var marked = attributes.Any(static a => TypeNameUtilities.IsNamed(a.AttributeClass, VECTOR_FIELD_ATTRIBUTE));
     return property.Type switch {
       IArrayTypeSymbol { IsSZArray: true, ElementType.SpecialType: SpecialType.System_Single } => StoredVectorForm.Array,
-      INamedTypeSymbol named when _isReadOnlyListOfFloat(named) => StoredVectorForm.ReadOnlyList,
+      INamedTypeSymbol named when _isOfFloat(named, "System.Collections.Generic.IReadOnlyList<T>") => StoredVectorForm.ReadOnlyList,
+      INamedTypeSymbol named when marked && _isOfFloat(named, "System.Collections.Generic.List<T>") => StoredVectorForm.List,
+      INamedTypeSymbol named when marked && _isOfFloat(named, "System.ReadOnlyMemory<T>") => StoredVectorForm.ReadOnlyMemory,
       _ => StoredVectorForm.None,
     };
   }
 
-  private static bool _isReadOnlyListOfFloat(INamedTypeSymbol type) =>
-    type.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_IReadOnlyList_T
-    && type.TypeArguments[0].SpecialType == SpecialType.System_Single;
+  private static bool _isOfFloat(INamedTypeSymbol type, string definition) =>
+    type.IsGenericType
+    && type.TypeArguments[0].SpecialType == SpecialType.System_Single
+    && TypeNameUtilities.IsNamed(type.OriginalDefinition, definition);
 
   /// <summary>
   /// The statement that attaches the stored-vector converter to the property at <paramref name="index"/>, or
@@ -66,6 +74,9 @@ public partial class MessageJsonContextGenerator {
     var (factory, vectorType) = prop.VectorForm switch {
       StoredVectorForm.Array => ("ForArray", "float[]"),
       StoredVectorForm.ReadOnlyList => ("ForReadOnlyList", "global::System.Collections.Generic.IReadOnlyList<float>"),
+      StoredVectorForm.List => ("ForList", "global::System.Collections.Generic.List<float>"),
+      // The serializer has no generated metadata for ReadOnlyMemory<float>: the converter reads and writes it as float[].
+      StoredVectorForm.ReadOnlyMemory => ("ForReadOnlyMemory", "float[]"),
       _ => (null, null),
     };
     if (factory is null) {

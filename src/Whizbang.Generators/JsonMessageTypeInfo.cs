@@ -134,6 +134,12 @@ internal enum StoredVectorForm {
 
   /// <summary>An <c>IReadOnlyList&lt;float&gt;</c>.</summary>
   ReadOnlyList,
+
+  /// <summary>A <c>List&lt;float&gt;</c> marked <c>[VectorField]</c>: unmarked, it is an ordinary list.</summary>
+  List,
+
+  /// <summary>A <c>ReadOnlyMemory&lt;float&gt;</c> marked <c>[VectorField]</c>: unmarked, it is left alone.</summary>
+  ReadOnlyMemory,
 }
 
 /// <summary>

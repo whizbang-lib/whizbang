@@ -184,14 +184,47 @@ public class StoredVectorConvertersTests {
   }
 
   [Test]
+  public async Task AListVector_ReadsEitherForm_AndWritesTheArrayAsync() {
+    var converter = StoredVectorConverters.ForList("listed", _info<List<float>>());
+    List<float> vector = [1.5f, -0.0f, float.Epsilon];
+
+    var fromPacked = _read(converter, $"\"{Pack([.. vector])}\"")!;
+    var fromArray = _read(converter, "[1.5,-0,1E-45]")!;
+    var written = _write(converter, vector);
+
+    await Assert.That(_bits(fromPacked)).IsEquivalentTo(_bits(vector));
+    await Assert.That(_bits(fromArray)).IsEquivalentTo(_bits(vector));
+    await Assert.That(written).IsEqualTo(JsonSerializer.Serialize(vector, _info<List<float>>()));
+  }
+
+  [Test]
+  public async Task AReadOnlyMemoryVector_ReadsEitherForm_AndWritesTheArrayAsync() {
+    var converter = StoredVectorConverters.ForReadOnlyMemory("memory", _info<float[]>());
+    float[] vector = [1.5f, -0.0f, float.Epsilon];
+
+    var fromPacked = _read(converter, $"\"{Pack(vector)}\"");
+    var fromArray = _read(converter, "[1.5,-0,1E-45]");
+    var written = _write<ReadOnlyMemory<float>>(converter, vector);
+
+    await Assert.That(_bits(fromPacked.ToArray())).IsEquivalentTo(_bits(vector));
+    await Assert.That(_bits(fromArray.ToArray())).IsEquivalentTo(_bits(vector));
+    await Assert.That(written).IsEqualTo(JsonSerializer.Serialize(vector, _info<float[]>()))
+      .Because("memory is written exactly as a float[] of the same values");
+  }
+
+  [Test]
   public async Task ANullPropertyName_IsRefusedAsync() {
     await Assert.That(() => StoredVectorConverters.ForArray(null!, _info<float[]>())).Throws<ArgumentNullException>();
     await Assert.That(() => StoredVectorConverters.ForReadOnlyList(null!, _info<IReadOnlyList<float>>())).Throws<ArgumentNullException>();
+    await Assert.That(() => StoredVectorConverters.ForList(null!, _info<List<float>>())).Throws<ArgumentNullException>();
+    await Assert.That(() => StoredVectorConverters.ForReadOnlyMemory(null!, _info<float[]>())).Throws<ArgumentNullException>();
   }
 
   [Test]
   public async Task ANullArrayForm_IsRefusedAsync() {
     await Assert.That(() => StoredVectorConverters.ForArray("v", null!)).Throws<ArgumentNullException>();
     await Assert.That(() => StoredVectorConverters.ForReadOnlyList("v", null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => StoredVectorConverters.ForList("v", null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => StoredVectorConverters.ForReadOnlyMemory("v", null!)).Throws<ArgumentNullException>();
   }
 }
