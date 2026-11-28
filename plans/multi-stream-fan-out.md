@@ -1,8 +1,9 @@
 # Multi-stream fan-out: one foreign event, many rows (#2275)
 
-Status: F1 to F3 built on one branch (2026-11-27), not yet merged; F4 to F6 not started. Design decided by the owner
-on 2026-11-25. Release: 1.0 (Release 1.0
-Planning board). Tracking: #2275 (question, accepted); each slice below is drafted to be filed as its own issue.
+Status: F1 to F3 merged (PR #2641); F4 (#2621), F5 (#2622) and the sync-wait follow-up (#2637) built on
+feat/2621-fanout-replay (2026-11-28), with one F5 window left open for an owner decision (see F5, "As built"); F6 not
+started. Design decided by the owner on 2026-11-25. Release: 1.0 (Release 1.0 Planning board). Tracking: #2275
+(question, accepted); each slice below is its own issue.
 
 ## Decision
 
@@ -173,6 +174,15 @@ below is produced by holding a worker at a named point, never by a delay.
 - **Docs.** `fundamentals/perspectives/rebuild.md` and `rewind.md` (what a fan-out row replays);
   `extending/internals/event-ordering-invariant.md`.
 
+- **As built (2026-11-28).** The replay applier folds a row's fan-outs as collectives (`FanOutCollectiveEvent`
+  wrappers), so checkpoints, snapshots, catch-up dedupe, reach (#1970) and the reap-boundary bootstrap treat them as
+  they treat collectives. The runner reads a key's stream when the key takes it (an own event sets it, or the replay's
+  start row holds it) and merges that stream's fan-outs committed after that point (`InterleaveFanOutsAsync`); the
+  in-memory apply checks the key at fold time. A foreign stream is read through the event store's archive seam, so it
+  follows the rebuild's `RebuildArchivedData` choice. The generated entry carries `CreateInMemoryExecutor`. No
+  migration. Adding a fan-out rebuilds nothing (nothing ever did; the "Rolling deploy" note below is corrected): rows
+  take foreign events from the release on, and a rebuild or rewind folds the earlier ones.
+
 ### F5. Live comes out the same as replay when events interleave
 
 - **Changes.** Two rules, so the live row equals the commit-order fold:
@@ -189,6 +199,22 @@ below is produced by holding a worker at a named point, never by a delay.
   commit concurrently. Each test asserts the live row equals a rebuild of it. A model without a fan-out issues no lock
   statement (captured SQL).
 - **Docs.** The multi-stream section's ordering half; a design-choice entry (below).
+
+- **As built (2026-11-28).** Rule 1: after each fan-out it applies, the sink calls `IFanOutLateApplyRewinds` per fan-out
+  of the event's type; the Postgres implementation calls `wh_rewind_fan_out_rows_applied_late` (migration 760), which
+  finds the targeted rows whose `metadata->>'CommitSequence'` is past the event and rewinds each from its first own
+  event after it through `_wh_rewind_perspectives_from`. Rule 2: a live batch of a fan-out model runs the same fan-out
+  fold as a replay, from the batch's first event, so a fan-out the sink already applied (per its reach) folds again
+  after the own event it was committed after; one still queued is left to the sink. Fan-outs folded live are not added
+  to the batch's processed events. **Not built: the per-key lock.** The runner's read and write are separate
+  transactions and connections (and most connections go through a transaction-pooling proxy), so a shared advisory
+  lock cannot span them without restructuring the apply. The remaining window (the sink's update misses a row whose
+  key is written a moment later, and the runner's read misses the sink's commit) is open; the plan's alternative, a key
+  lookup after the row commits that rewinds the row when a completed fan-out of its key was not folded, is the
+  recommended close. Owner decision.
+- **#2637 (sync waits).** After a fan-out's apply commits, the sink marks the event applied and processed under each
+  perspective that fans it out (once per perspective), so a sync wait on that perspective completes. No lifecycle stage
+  fires per row; owner decision recorded as a recommendation.
 
 ### F6. Sample and design-choice locks
 
@@ -209,8 +235,9 @@ below is produced by holding a worker at a named point, never by a delay.
   overrides the stand-down, the row has to stay pending instead.
 - **Rollback.** A rollback across the release stands down at Assess (the rollback gate, #2022). Rows the fan-out updated
   stay updated, and an older build reads them, since the columns are ordinary physical fields.
-- **Adding a fan-out to a deployed perspective** changes its associations hash, which rebuilds it from history (F2).
-  For a large table that is a planned rebuild; the docs say so.
+- **Adding a fan-out to a deployed perspective** changes its associations hash, which runs the associations step and
+  the standby handshake, and rebuilds nothing. Its rows take the foreign events committed from the release on; a
+  rebuild (of the perspective or of selected streams) or any rewind of a row folds the earlier ones (F4).
 
 ## Docs pages (docs repo, `src/assets/docs/v1.0.0/`)
 
