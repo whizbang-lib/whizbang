@@ -58,7 +58,7 @@ public partial class FanOutReplayIntegrationTests : EFCoreTestBase {
     services.AddScoped<DbContext>(sp => sp.GetRequiredService<WorkCoordinationDbContext>());
     services.AddScoped<IEventStore>(sp => {
       var driver = new EFCoreEventStore<WorkCoordinationDbContext>(sp.GetRequiredService<WorkCoordinationDbContext>());
-      return withArchive ? new ArchiveAwareEventStoreDecorator(driver, _archive(), readThrough: true) : driver;
+      return new HeldReads(withArchive ? new ArchiveAwareEventStoreDecorator(driver, _archive(), readThrough: true) : driver, this);
     });
     // The driver's database, as the driver registers it: the replay reads how far the sink applied each fan-out (#1970)
     // through it, and the sink rewinds the rows it reached late (#2622).
@@ -334,6 +334,8 @@ public partial class FanOutReplayIntegrationTests : EFCoreTestBase {
       });
     }
     // Committed: the event takes its place in the store's commit order, as the live paths see it.
+    // The scope column, as the store's emit chain writes it; a direct append leaves it to the hops.
+    await _executeAsync($"UPDATE wh_event_store SET scope = jsonb_build_object('t', '{TENANT}') WHERE event_id = '{id}'");
     await _executeAsync("SELECT stamp_pending_commit_sequences()");
     return id;
   }

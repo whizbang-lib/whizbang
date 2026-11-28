@@ -138,4 +138,20 @@ public interface ICollectiveReplayApplier {
     Guid keyStreamId,
     CollectiveReplayStart start,
     CancellationToken cancellationToken) => Task.FromResult(remaining);
+
+  /// <summary>
+  /// After a live write of a row a fan-out targets (#2622): rewinds the row when the collective sink applied a foreign
+  /// event of one of its keys, committed after the row took the key, that the write did not fold. That happens only when
+  /// the sink's update ran while the row had no key yet and the row's read ran before the event committed; then the row
+  /// is flagged for a rewind from <see cref="FanOutMissCheck.TriggerEventId"/>, whose replay folds it. A row that missed
+  /// nothing is only read. The default checks nothing.
+  /// </summary>
+  /// <param name="modelType">The model the row folds into.</param>
+  /// <param name="check">The row, its keys and what the write folded.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The rows flagged for a rewind: 0 or 1.</returns>
+  /// <docs>fundamentals/perspectives/multi-stream#live-comes-out-as-replay</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AnApplierWrittenBeforeReplaysFoldedFanOuts_FoldsNoneAsync</tests>
+  Task<int> RewindIfFanOutsMissedAsync(Type modelType, FanOutMissCheck check, CancellationToken cancellationToken) =>
+    Task.FromResult(0);
 }

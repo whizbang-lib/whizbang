@@ -555,9 +555,48 @@ public class CollectiveReplayRunnerTests {
 
     await Assert.That(minimal.FoldsFanOutsInto(typeof(PermissionSetModel))).IsFalse();
     await Assert.That(minimal.FanOutKeysOf(typeof(PermissionSetModel), new PermissionSetModel())).IsEmpty();
+    await Assert.That(await minimal.RewindIfFanOutsMissedAsync(
+        typeof(PermissionSetModel), new FanOutMissCheck(Guid.Empty, "p", "t", Guid.Empty, [], []), CancellationToken.None)).IsEqualTo(0);
     await Assert.That(await minimal.InterleaveFanOutsAsync(
         typeof(PermissionSetModel), remaining, Guid.CreateVersion7(), new CollectiveReplayStart(TenantId: null), CancellationToken.None))
       .IsSameReferenceAs(remaining);
+  }
+
+  // #2622: a live write of a row a fan-out targets asks, once it has committed, whether the sink applied a foreign
+  // event of the row's keys that the write missed; the row's keys, with where it took each, and the batch's first event.
+  [Test]
+  public async Task ALiveWrite_OfARowAFanOutTargets_AsksWhetherItMissedAnAppliedFanOutAsync() {
+    var applier = new FakeFanOutApplier();
+    var harness = new Harness(applier);
+    var userId = TrackedGuid.New().Value;
+    var set = await harness.AppendAsync(userId, new PermissionsSet { UserId = userId, Revision = 1, Permissions = "read" });
+    set.LocalCommitSequence = 10;
+
+    _ = await harness.Runner.RunWithEventsAsync(userId, harness.PerspectiveName, null, [set], CancellationToken.None);
+
+    var check = applier.Checks.Single();
+    await Assert.That(check.RowId).IsEqualTo(userId);
+    await Assert.That(check.PerspectiveName).IsEqualTo(harness.PerspectiveName);
+    await Assert.That(check.TriggerEventId).IsEqualTo(set.MessageId.Value).Because("a rewind replays from the batch's first event");
+    await Assert.That(check.Keys).IsEquivalentTo([new FanOutKeyTaken(FakeFanOutApplier.Key, 10, set.MessageId.Value)])
+      .Because("the key the event gave the row, taken at that event");
+    await Assert.That(check.Folded).IsEmpty().Because("the write folded no foreign event");
+  }
+
+  [Test]
+  public async Task ALiveWrite_ThatLeftNoKey_AndAReplay_AskNothingAsync() {
+    var applier = new FakeFanOutApplier();
+    var harness = new Harness(applier);
+    var (keyless, rebuilt) = (TrackedGuid.New().Value, TrackedGuid.New().Value);
+    var noKey = await harness.AppendAsync(keyless, new PermissionsSet { UserId = keyless, Revision = 0, Permissions = "none" });
+    await harness.AppendAsync(rebuilt, new PermissionsSet { UserId = rebuilt, Revision = 1, Permissions = "read" });
+
+    _ = await harness.Runner.RunWithEventsAsync(keyless, harness.PerspectiveName, null, [noKey], CancellationToken.None);
+    _ = await harness.RebuildAsync(rebuilt);
+
+    await Assert.That(harness.Rows.Row(keyless).Permissions).IsEqualTo("none").Because("the control: the live batch wrote the row");
+    await Assert.That(applier.Checks).IsEmpty()
+      .Because("a row with no key holds no stream, and a rebuild folds every fan-out itself");
   }
 
   [Test]
@@ -635,6 +674,12 @@ public class CollectiveReplayRunnerTests {
     public static readonly Guid Key = Guid.Parse("0000000f-0000-7000-8000-000000000000");
     public List<MessageEnvelope<IEvent>> FanOuts { get; } = [];
     public List<(Guid Key, CollectiveReplayStart Start)> Merges { get; } = [];
+    public List<FanOutMissCheck> Checks { get; } = [];
+
+    public Task<int> RewindIfFanOutsMissedAsync(Type modelType, FanOutMissCheck check, CancellationToken cancellationToken) {
+      Checks.Add(check);
+      return Task.FromResult(0);
+    }
 
     public void Add(long commitSequence) {
       var envelope = GeneratedRunners.Envelope(new PermissionsBulkGranted());

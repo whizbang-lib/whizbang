@@ -53,6 +53,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
   private readonly IReadOnlyList<string> _collectiveStreamTypes;
   private readonly Func<IReadOnlyList<Guid>, CancellationToken, Task<IReadOnlyDictionary<Guid, CollectiveApplyReach>>>? _reach;
   private readonly IReadOnlyList<PerspectiveFanOutEntry> _fanOuts;
+  private readonly Func<IReadOnlyList<string>, FanOutMissCheck, CancellationToken, Task<int>>? _missed;
 
   // The reach each collective a replay merged in was read with, by the event instance the replay folds (#1970). Weak, so
   // an event the replay is done with takes its reach with it.
@@ -130,7 +131,11 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
         Reach: archive is null
           ? null
           : (eventIds, ct) => CollectiveApplyReach.ReadAsync(archive, eventIds, ct),
-        FanOuts: fanOuts ?? throw new ArgumentNullException(nameof(fanOuts)))) {
+        FanOuts: fanOuts ?? throw new ArgumentNullException(nameof(fanOuts))) {
+      Missed = archive is null
+          ? null
+          : (eventTypes, check, ct) => FanOutMisses.RewindAsync(archive, eventTypes, check, ct),
+    }) {
   }
 
   /// <summary>Creates a replay applier whose archived collective streams come from <paramref name="archivedStreams"/>.</summary>
@@ -162,6 +167,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
       IReadOnlyList<ICollectiveInMemoryExecutor> executors,
       ReplaySources sources) {
     var (archivedStreams, reach, fanOuts) = sources;
+    _missed = sources.Missed;
     ArgumentNullException.ThrowIfNull(entries);
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(eventStore);
@@ -374,6 +380,22 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     var fanOuts = ReplayEventOrder.Order(read).Select(e => _asFanOut(e, keyStreamId, tenantId)).ToList();
     await _readReachAsync(fanOuts, cancellationToken).ConfigureAwait(false);
     return _mergeIntoStreamOrder(remaining, fanOuts);
+  }
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// Read with the driver's database (the one a collective stream archived whole is listed from); an applier made without
+  /// one checks nothing. A row with no tenant, or no key holding a stream, is reached by no fan-out, so nothing is asked.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/FanOutReplayApplierTests.cs:RewindIfFanOutsMissedAsync_AsksTheDatabaseForTheRowsKeys_InTheModelsFanOutTypesAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/FanOutReplayApplierTests.cs:RewindIfFanOutsMissedAsync_AsksNothing_WithNoDatabase_NoFanOut_NoTenantOrNoKeyAsync</tests>
+  public Task<int> RewindIfFanOutsMissedAsync(Type modelType, FanOutMissCheck check, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(modelType);
+    ArgumentNullException.ThrowIfNull(check);
+    var types = _fanOuts.Where(f => f.ModelType == modelType).Select(f => TypeNameFormatter.Format(f.EventType)).Distinct(StringComparer.Ordinal).ToList();
+    return _missed is null || types.Count == 0 || check.TenantId is null || check.Keys.Count == 0
+      ? Task.FromResult(0)
+      : _missed(types, check, cancellationToken);
   }
 
   // A foreign event as the replay folds it: a collective of its stream and tenant, at its stream position, with no hops.
@@ -649,7 +671,10 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
   internal sealed record ReplaySources(
     Func<IReadOnlyList<string>, string?, CancellationToken, Task<IReadOnlyList<Guid>>>? ArchivedStreams,
     Func<IReadOnlyList<Guid>, CancellationToken, Task<IReadOnlyDictionary<Guid, CollectiveApplyReach>>>? Reach,
-    IReadOnlyList<PerspectiveFanOutEntry> FanOuts);
+    IReadOnlyList<PerspectiveFanOutEntry> FanOuts) {
+    /// <summary>Rewinds a written row that missed an applied fan-out (#2622); null checks none.</summary>
+    public Func<IReadOnlyList<string>, FanOutMissCheck, CancellationToken, Task<int>>? Missed { get; init; }
+  }
 
   // A collective apply reaching replay is guaranteed self-referential by WHIZ106, so it never queries siblings.
   // If one does, fail loudly rather than silently produce a wrong rebuild.

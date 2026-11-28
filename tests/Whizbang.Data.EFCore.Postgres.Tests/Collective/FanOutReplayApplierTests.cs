@@ -122,10 +122,11 @@ public class FanOutReplayApplierTests {
       IReadOnlyList<PerspectiveFanOutEntry> fanOuts,
       Dictionary<Guid, List<MessageEnvelope<IEvent>>>? streams = null,
       IReadOnlyList<ICollectiveInMemoryExecutor>? executors = null,
-      Func<IReadOnlyList<Guid>, CancellationToken, Task<IReadOnlyDictionary<Guid, CollectiveApplyReach>>>? reach = null) =>
+      Func<IReadOnlyList<Guid>, CancellationToken, Task<IReadOnlyDictionary<Guid, CollectiveApplyReach>>>? reach = null,
+      Func<IReadOnlyList<string>, FanOutMissCheck, CancellationToken, Task<int>>? missed = null) =>
     new([], new ServiceCollection().AddSingleton(new Projection()).BuildServiceProvider(),
       new StreamsEventStore(streams ?? []), new NoQuery(), executors ?? [],
-      new CollectiveReplayApplier.ReplaySources(ArchivedStreams: null, reach, fanOuts));
+      new CollectiveReplayApplier.ReplaySources(ArchivedStreams: null, reach, fanOuts) { Missed = missed });
 
   private static MessageEnvelope<IEvent> _event(IEvent payload, long? commitSequence, string? tenant = TENANT) => new() {
     MessageId = MessageId.From(Guid.CreateVersion7()),
@@ -302,6 +303,49 @@ public class FanOutReplayApplierTests {
     SourceServiceId = origin,
     SourceCommitSequence = originSequence,
   };
+
+  // ===== the lookup after a live write (#2622) =====
+
+  private static FanOutMissCheck _check(string? tenant = TENANT, IReadOnlyList<FanOutKeyTaken>? keys = null) =>
+    new(Guid.CreateVersion7(), "Orders.Perspective", tenant, Guid.CreateVersion7(),
+      keys ?? [new FanOutKeyTaken(Guid.CreateVersion7(), 10, Guid.CreateVersion7())], [Guid.CreateVersion7()]);
+
+  [Test]
+  public async Task RewindIfFanOutsMissedAsync_AsksTheDatabaseForTheRowsKeys_InTheModelsFanOutTypesAsync() {
+    (IReadOnlyList<string> Types, FanOutMissCheck Check)? asked = null;
+    var applier = _applier(
+      [_byCustomer, _entry<Renamed>(o => o.BillingId), _entry<Billed>(o => o.CustomerId)],
+      missed: (types, check, _) => {
+        asked = (types, check);
+        return Task.FromResult(1);
+      });
+    var check = _check();
+
+    var rewound = await applier.RewindIfFanOutsMissedAsync(typeof(Order), check, CancellationToken.None);
+
+    await Assert.That(rewound).IsEqualTo(1);
+    await Assert.That(asked!.Value.Check).IsSameReferenceAs(check);
+    await Assert.That(asked.Value.Types).IsEquivalentTo([TypeNameFormatter.Format(typeof(Renamed)), TypeNameFormatter.Format(typeof(Billed))])
+      .Because("each of the model's fan-out types once, by the name the store records");
+  }
+
+  [Test]
+  public async Task RewindIfFanOutsMissedAsync_AsksNothing_WithNoDatabase_NoFanOut_NoTenantOrNoKeyAsync() {
+    var asks = 0;
+    var applier = _applier([_byCustomer], missed: (_, _, _) => {
+      asks++;
+      return Task.FromResult(1);
+    });
+
+    await Assert.That(await _applier([_byCustomer]).RewindIfFanOutsMissedAsync(typeof(Order), _check(), CancellationToken.None)).IsEqualTo(0)
+      .Because("an applier made with no database checks nothing");
+    await Assert.That(await applier.RewindIfFanOutsMissedAsync(typeof(Unrelated), _check(), CancellationToken.None)).IsEqualTo(0);
+    await Assert.That(await applier.RewindIfFanOutsMissedAsync(typeof(Order), _check(tenant: null), CancellationToken.None)).IsEqualTo(0);
+    await Assert.That(await applier.RewindIfFanOutsMissedAsync(typeof(Order), _check(keys: []), CancellationToken.None)).IsEqualTo(0);
+    await Assert.That(asks).IsEqualTo(0);
+    await Assert.That(async () => await applier.RewindIfFanOutsMissedAsync(null!, _check(), CancellationToken.None)).Throws<ArgumentNullException>();
+    await Assert.That(async () => await applier.RewindIfFanOutsMissedAsync(typeof(Order), null!, CancellationToken.None)).Throws<ArgumentNullException>();
+  }
 
   // ===== the in-memory apply =====
 

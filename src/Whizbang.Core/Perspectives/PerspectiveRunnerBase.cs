@@ -896,6 +896,10 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     public TModel? UpdatedModel;
     public bool HasWrittenUpdate;
     public bool CollectiveInFlight;
+    // #2622: a live batch of a row a fan-out targets: the streams its keys took, and the foreign events it folded that
+    // the sink had applied, for the lookup after the write.
+    public FanOutKeys? LiveFanOutKeys;
+    public HashSet<Guid>? FoldedFanOuts;
     public bool PendingPurge;
     public Guid? PurgeEventId;
     public string? PurgeEventType;
@@ -1401,6 +1405,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     var fanOutKeys = _modelHasFanOuts() ? new FanOutKeys() : null;
     var replaying = _replaying();
     if (fanOutKeys is not null && !replaying && events.Count > 0) {
+      state.LiveFanOutKeys = fanOutKeys;
       var withHeldKeys = new global::System.Collections.Generic.List<MessageEnvelope<IEvent>>(events);
       await _mergeTakenFanOutsAsync(withHeldKeys, 0, state.UpdatedModel, fanOutKeys, _takenAt(events[0]), admit: null, cancellationToken);
       events = withHeldKeys;
@@ -1602,6 +1607,33 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     public global::Whizbang.Core.Perspectives.CollectiveReplayStart StartOf(Guid key) => _taken[key];
   }
 
+  /// <summary>
+  /// After a live write of a row a fan-out targets (#2622), asks whether the sink applied a foreign event of one of the
+  /// row's keys that the write missed: its update ran while the row had no key, and the row's read ran before the event
+  /// committed. Such a row is rewound from the batch's first event. A replay, a row no fan-out targets and a row whose
+  /// keys hold no stream ask nothing.
+  /// </summary>
+  private async Task _rewindIfAFanOutMissedTheRowAsync(ApplyState state, CancellationToken cancellationToken) {
+    if (state.LiveFanOutKeys is not { } taken) {
+      return;
+    }
+    var held = _fanOutKeysOf(state.UpdatedModel);
+    if (held.Count == 0) {
+      return;
+    }
+    var check = new global::Whizbang.Core.Perspectives.FanOutMissCheck(
+      state.StreamId,
+      state.PerspectiveName,
+      taken.StartOf(held[0]).TenantId,
+      state.Events[0].MessageId.Value,
+      [.. held.Select(key => {
+        var start = taken.StartOf(key);
+        return new global::Whizbang.Core.Perspectives.FanOutKeyTaken(key, start.AfterCommitSequence, start.AfterEventId);
+      })],
+      (IReadOnlyCollection<Guid>?)state.FoldedFanOuts ?? []);
+    _ = await _collectiveReplayApplier!.RewindIfFanOutsMissedAsync(typeof(TModel), check, cancellationToken);
+  }
+
   /// <summary>Where a key the row's event <paramref name="envelope"/> set took its stream: after that event, in its tenant.</summary>
   private static global::Whizbang.Core.Perspectives.CollectiveReplayStart _takenAt(MessageEnvelope<IEvent> envelope) =>
     new(envelope.GetCurrentScope()?.Scope.TenantId, envelope.MessageId.Value, envelope.LocalCommitSequence);
@@ -1757,6 +1789,10 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     // #2622: a fan-out a live batch folds again is the sink's to report, not this batch's: it is no event of the row's, so
     // it is not processed here, and the batch's stages and completion name only the row's own events.
     if (envelope.Payload is global::Whizbang.Core.Perspectives.FanOutCollectiveEvent && !_replaying()) {
+      // Folded as the sink applied it; one still in flight the sink applies after this write.
+      if (!_collectiveReplayApplier!.IsInFlight(envelope.Payload)) {
+        (state.FoldedFanOuts ??= []).Add(envelope.MessageId.Value);
+      }
       return;
     }
     state.ProcessedEvents.Add(envelope);
@@ -2017,6 +2053,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       // PostPerspectiveInline guarantees data is persisted and immediately queryable.
       await _perspectiveStore.FlushAsync(cancellationToken);
       _logSaveTime(state);
+      await _rewindIfAFanOutMissedTheRowAsync(state, cancellationToken);
 
       _logger.LogDebug(
           "Successfully processed {EventCount} events for {PerspectiveName} stream {StreamId}, checkpoint: {CheckpointEventId}",
