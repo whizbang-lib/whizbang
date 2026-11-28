@@ -682,6 +682,10 @@ properties[__INDEX__] = CreateProperty<__PROPERTY_TYPE__>(
 properties[__INDEX__].CustomConverter = global::Whizbang.Core.Serialization.StoredVectorConverters.__VECTOR_FACTORY__("__JSON_PROPERTY_NAME__", GetOrCreateTypeInfo<__VECTOR_TYPE__>(options));
 #endregion
 
+#region STORED_VECTOR_PATHS_REGISTRATION
+global::Whizbang.Core.Serialization.StoredVectorPaths.Register(typeof(__MESSAGE_TYPE__), __VECTOR_PATHS__);
+#endregion
+
 #region PARAMETER_INFO_VALUES
 ctorParams[__INDEX__] = new JsonParameterInfoValues {
   Name = "__PARAMETER_NAME__",

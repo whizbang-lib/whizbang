@@ -28,6 +28,11 @@ public static class MessageJsonContextInitializer {
     // This region will be replaced with RegisterDerivedType calls for each message type
     #endregion
 
+    #region STORED_VECTOR_PATHS
+    // This region will be replaced with StoredVectorPaths.Register calls for each event type with a vector property
+    // whose stored form may be packed binary32 (#2624)
+    #endregion
+
     #region REQUIRED_MEMBER_DECLARATIONS
     // This region will be replaced with DeclaredRequiredMembers.Register calls for each type a perspective model
     // shares with an event or another message: their reader tolerates a missing required member (#1874)

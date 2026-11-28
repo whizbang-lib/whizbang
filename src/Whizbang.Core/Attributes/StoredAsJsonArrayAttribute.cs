@@ -9,7 +9,7 @@ namespace Whizbang.Core.Attributes;
 /// </summary>
 /// <remarks>
 /// Use it when something outside the framework reads the vector out of the stored body as JSON numbers, such as a
-/// SQL query or a report. The property gets no packed-form converter, so a packed string in its place is refused rather than read.
+/// SQL query or a report. The property gets no packed-form converter and no stored-vector path, so it is never packed.
 /// The wire form is the JSON array either way: packing applies to the stored body only.
 /// </remarks>
 /// <example>
@@ -21,7 +21,7 @@ namespace Whizbang.Core.Attributes;
 /// </code>
 /// </example>
 /// <docs>data/event-store#packed-vectors</docs>
-/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextStoredVectorTests.cs:Generator_AnOptedOutVector_GetsNoConverterAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextStoredVectorTests.cs:Generator_AnOptedOutVector_GetsNoConverterAndNoPathAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Serialization/StoredVectorEventReadTests.cs:AnOptedOutOrDoubleVector_IsNeverReadAsPackedAsync</tests>
 [AttributeUsage(AttributeTargets.Property, AllowMultiple = false, Inherited = true)]
 public sealed class StoredAsJsonArrayAttribute : Attribute;

@@ -90,6 +90,7 @@ WHIZ060 | active | Whizbang.Generators | Property uses non-serializable type 'ob
 WHIZ061 | active | Whizbang.Generators | Property uses non-serializable type 'dynamic'
 WHIZ062 | active | Whizbang.Generators | Property uses non-serializable interface type
 WHIZ063 | active | Whizbang.Generators | Nested type contains non-serializable property
+WHIZ064 | active | Whizbang.Generators | Vector stays a JSON array in the stored event body
 WHIZ070 | active | Whizbang.Data.EFCore.Postgres.Generators, Whizbang.Generators | Vector field requires Pgvector.EntityFrameworkCore package
 WHIZ071 | active | Whizbang.Data.EFCore.Postgres.Generators | Vector field requires Pgvector package
 WHIZ072 | active | Whizbang.Generators | Polymorphic Base Type Discovered

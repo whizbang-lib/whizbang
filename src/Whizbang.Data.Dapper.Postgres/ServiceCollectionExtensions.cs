@@ -603,6 +603,15 @@ public static class ServiceCollectionExtensions {
       MetadataTrimGateStep.FromServices));
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
       MetadataHistoryConversionStep.FromServices));
+    // #2625: the packing gate writes this service's event vector paths and opens packed vectors in stored bodies once
+    // every live instance reads them.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, VectorPackingGateStep>(
+      VectorPackingGateStep.FromServices));
+    // #2625: before an instance becomes ready, it must still read every vector path its stored bodies hold packed.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<global::Whizbang.Core.Startup.IStartupStep, StoredVectorReadersStartupStep>(
+      static sp => new StoredVectorReadersStartupStep(sp, sp.GetService<global::Whizbang.Core.IMessageTypeCatalog>(),
+        sp.GetService<Microsoft.Extensions.Logging.ILogger<StoredVectorReadersStartupStep>>()
+          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<StoredVectorReadersStartupStep>.Instance)));
     // #2326: the maintenance step that converts audit records written before the pointer default to the pointer form.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, AuditBodyConversionStep>(
       AuditBodyConversionStep.FromServices));

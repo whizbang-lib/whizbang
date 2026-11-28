@@ -10,7 +10,8 @@ namespace Whizbang.Core.Serialization;
 
 /// <summary>
 /// The converters the generated message JSON context attaches to every vector property (a <c>float[]</c> or an
-/// <c>IReadOnlyList&lt;float&gt;</c> not marked <see cref="Attributes.StoredAsJsonArrayAttribute"/>). Each reads
+/// <c>IReadOnlyList&lt;float&gt;</c>, and a <c>List&lt;float&gt;</c> or <c>ReadOnlyMemory&lt;float&gt;</c> marked
+/// <see cref="Perspectives.VectorFieldAttribute"/>, none marked <see cref="Attributes.StoredAsJsonArrayAttribute"/>). Each reads
 /// either stored form of the vector and always writes the JSON array (#2624).
 /// </summary>
 /// <remarks>
@@ -46,6 +47,23 @@ public static class StoredVectorConverters {
   /// <tests>tests/Whizbang.Core.Tests/Serialization/StoredVectorConvertersTests.cs:AReadOnlyListVector_ReadsEitherForm_AndWritesTheArrayAsync</tests>
   public static JsonConverter<IReadOnlyList<float>> ForReadOnlyList(string propertyName, JsonTypeInfo<IReadOnlyList<float>> arrayForm) =>
     new StoredVectorJsonConverter<IReadOnlyList<float>>(propertyName, arrayForm, static packed => packed);
+
+  /// <summary>The converter for a <c>List&lt;float&gt;</c> vector property marked <c>[VectorField]</c>.</summary>
+  /// <param name="propertyName">The property's JSON name, named by a read that fails.</param>
+  /// <param name="arrayForm">The property's own metadata, which reads and writes the array form.</param>
+  /// <returns>A converter that reads either form and writes the array.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Serialization/StoredVectorConvertersTests.cs:AListVector_ReadsEitherForm_AndWritesTheArrayAsync</tests>
+  public static JsonConverter<List<float>> ForList(string propertyName, JsonTypeInfo<List<float>> arrayForm) =>
+    new StoredVectorJsonConverter<List<float>>(propertyName, arrayForm, static packed => [.. packed]);
+
+  /// <summary>The converter for a <c>ReadOnlyMemory&lt;float&gt;</c> vector property marked <c>[VectorField]</c>.</summary>
+  /// <param name="propertyName">The property's JSON name, named by a read that fails.</param>
+  /// <param name="arrayForm">The <c>float[]</c> metadata, which reads and writes the array form: the serializer has no
+  /// source-generated metadata of its own for <c>ReadOnlyMemory&lt;float&gt;</c>.</param>
+  /// <returns>A converter that reads either form and writes the array, exactly as a <c>float[]</c> of the same values.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Serialization/StoredVectorConvertersTests.cs:AReadOnlyMemoryVector_ReadsEitherForm_AndWritesTheArrayAsync</tests>
+  public static JsonConverter<ReadOnlyMemory<float>> ForReadOnlyMemory(string propertyName, JsonTypeInfo<float[]> arrayForm) =>
+    new StoredVectorMemoryJsonConverter(new StoredVectorJsonConverter<float[]>(propertyName, arrayForm, static packed => packed), arrayForm);
 }
 
 /// <summary>Reads a vector stored as a JSON array or packed binary32, and writes the array.</summary>
@@ -84,4 +102,23 @@ internal sealed class StoredVectorJsonConverter<TVector> : JsonConverter<TVector
     }
     return values;
   }
+}
+
+/// <summary>Reads a <c>ReadOnlyMemory&lt;float&gt;</c> vector in either stored form, and writes it as a <c>float[]</c> array.</summary>
+internal sealed class StoredVectorMemoryJsonConverter : JsonConverter<ReadOnlyMemory<float>> {
+  private readonly StoredVectorJsonConverter<float[]> _vector;
+  private readonly JsonTypeInfo<float[]> _arrayForm;
+
+  internal StoredVectorMemoryJsonConverter(StoredVectorJsonConverter<float[]> vector, JsonTypeInfo<float[]> arrayForm) {
+    _vector = vector;
+    _arrayForm = arrayForm;
+  }
+
+  /// <inheritdoc/>
+  public override ReadOnlyMemory<float> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+    _vector.Read(ref reader, typeof(float[]), options);
+
+  /// <inheritdoc/>
+  public override void Write(Utf8JsonWriter writer, ReadOnlyMemory<float> value, JsonSerializerOptions options) =>
+    JsonSerializer.Serialize(writer, value.ToArray(), _arrayForm);
 }
