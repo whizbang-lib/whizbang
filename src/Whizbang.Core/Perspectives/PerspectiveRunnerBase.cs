@@ -1398,20 +1398,17 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     // committed after one of the batch's events, to the row before that event (a key the row held), or to no row (a key
     // the event gives it). Each such fan-out the sink has applied folds again after the event; one it has not, it applies
     // after this write, which is its place in commit order too.
-    if (_modelHasFanOuts()) {
-      var replaying = _replaying();
-      var fold = new global::System.Collections.Generic.List<MessageEnvelope<IEvent>>(_skipToUnconditionalPurge(state, events));
-      var keys = new FanOutKeys();
-      if (!replaying && fold.Count > 0) {
-        await _mergeTakenFanOutsAsync(fold, 0, state.UpdatedModel, keys, _takenAt(fold[0]), admit: null, cancellationToken);
-      }
-      await _foldWithFanOutsAsync(
-          state, fold, keys, enableEventSpans, appliedEventTypes, throughLastOwnEvent: false, cancellationToken);
-      if (replaying) {
-        state.Events = fold;
-      }
-    } else {
-      _foldEvents(state, events, enableEventSpans, appliedEventTypes, cancellationToken);
+    var fanOutKeys = _modelHasFanOuts() ? new FanOutKeys() : null;
+    var replaying = _replaying();
+    if (fanOutKeys is not null && !replaying && events.Count > 0) {
+      var withHeldKeys = new global::System.Collections.Generic.List<MessageEnvelope<IEvent>>(events);
+      await _mergeTakenFanOutsAsync(withHeldKeys, 0, state.UpdatedModel, fanOutKeys, _takenAt(events[0]), admit: null, cancellationToken);
+      events = withHeldKeys;
+    }
+    var folded = await _foldEventsAsync(
+        state, events, fanOutKeys, enableEventSpans, appliedEventTypes, throughLastOwnEvent: false, cancellationToken);
+    if (fanOutKeys is not null && replaying) {
+      state.Events = folded;
     }
 
     // Add summary tags to parent activity (Perspective RunAsync span from PerspectiveWorker)
@@ -1529,20 +1526,34 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   }
 
   /// <summary>
-  /// Applies each event of the batch to the model, in memory: the one live fold. Synchronous, and each step lands in
-  /// the apply's state as it is taken, so a failure part-way saves exactly the progress made. Each event is folded by
-  /// instance helpers over that one state object, so the loop allocates nothing of its own per event.
+  /// Applies each event of the batch to the model, in memory: the one live fold, of the per-pair path, a prepare, a
+  /// rebuild and the reap-boundary bootstrap. Each step lands in the apply's state as it is taken, so a failure part-way
+  /// saves exactly the progress made. Each event is folded by instance helpers over that one state object, so the loop
+  /// allocates nothing of its own per event. With <paramref name="fanOutKeys"/>, each of the row's own events that gives
+  /// a fan-out key a stream brings that stream's fan-outs committed after it into what is left to fold (#2621); with
+  /// <paramref name="throughLastOwnEvent"/> the fold ends at the row's last own event. Returns the events it folded.
   /// </summary>
-  private void _foldEvents(
+  private async Task<IReadOnlyList<MessageEnvelope<IEvent>>> _foldEventsAsync(
       ApplyState state,
       IReadOnlyList<MessageEnvelope<IEvent>> events,
+      FanOutKeys? fanOutKeys,
       bool enableEventSpans,
       List<string> appliedEventTypes,
+      bool throughLastOwnEvent,
       CancellationToken cancellationToken) {
-    var foldEvents = _skipToUnconditionalPurge(state, events);
+    var skipped = _skipToUnconditionalPurge(state, events);
+    // #2621: a fold that merges fan-outs adds to what is left, so it folds a copy it can grow; any other folds as given.
+    var growing = fanOutKeys is null ? null : new global::System.Collections.Generic.List<MessageEnvelope<IEvent>>(skipped);
+    IReadOnlyList<MessageEnvelope<IEvent>> foldEvents = growing ?? skipped;
+    // Merging adds only other streams' events, so the row's own events left to fold are counted once.
+    var ownLeft = throughLastOwnEvent ? foldEvents.Count(static e => e.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent) : -1;
 
-    // Process all events in order
-    foreach (var envelope in foldEvents) {
+    // Process all events in order, reading the list as it goes.
+    for (var i = 0; i < foldEvents.Count; i++) {
+      if (ownLeft == 0) {
+        growing!.RemoveRange(i, growing.Count - i);
+        break;
+      }
 
       // Phase H step 9 slice 4: cooperative cancellation between events. Apply itself is a
       // pure synchronous function and can't be canceled mid-call, but we check the lease
@@ -1552,8 +1563,16 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       // a runaway perspective could park the drain pump for many minutes.
       cancellationToken.ThrowIfCancellationRequested();
 
+      var envelope = foldEvents[i];
       _foldEvent(state, envelope, enableEventSpans, appliedEventTypes);
+      if (envelope.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent) {
+        ownLeft--;
+        if (fanOutKeys is not null) {
+          await _mergeTakenFanOutsAsync(growing!, i + 1, state.UpdatedModel, fanOutKeys, _takenAt(envelope), admit: null, cancellationToken);
+        }
+      }
     }
+    return foldEvents;
   }
 
   /// <summary>Whether this fold is a rebuild or a replay, as opposed to the live drain.</summary>
@@ -1581,37 +1600,6 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
 
     /// <summary>Where <paramref name="key"/>, which the replay took, was taken.</summary>
     public global::Whizbang.Core.Perspectives.CollectiveReplayStart StartOf(Guid key) => _taken[key];
-  }
-
-  /// <summary>
-  /// The fold of a replay whose row a fan-out targets (#2621): <see cref="_foldEvent"/> for each event, in order, and after
-  /// each of the row's own events, the fan-outs of every stream a key of the row took with it, merged into the events
-  /// still to fold. With <paramref name="throughLastOwnEvent"/> the fold ends at the row's last own event, as a snapshot
-  /// taken there must not hold what was committed after it.
-  /// </summary>
-  private async Task _foldWithFanOutsAsync(
-      ApplyState state,
-      global::System.Collections.Generic.List<MessageEnvelope<IEvent>> fold,
-      FanOutKeys keys,
-      bool enableEventSpans,
-      global::System.Collections.Generic.List<string> appliedEventTypes,
-      bool throughLastOwnEvent,
-      CancellationToken cancellationToken) {
-    // Merging adds only other streams' events, so the row's own events left to fold are counted once.
-    var ownLeft = fold.Count(static e => e.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent);
-    for (var i = 0; i < fold.Count; i++) {
-      if (throughLastOwnEvent && ownLeft == 0) {
-        fold.RemoveRange(i, fold.Count - i);
-        return;
-      }
-      cancellationToken.ThrowIfCancellationRequested();
-      var envelope = fold[i];
-      _foldEvent(state, envelope, enableEventSpans, appliedEventTypes);
-      if (envelope.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent) {
-        ownLeft--;
-        await _mergeTakenFanOutsAsync(fold, i + 1, state.UpdatedModel, keys, _takenAt(envelope), admit: null, cancellationToken);
-      }
-    }
   }
 
   /// <summary>Where a key the row's event <paramref name="envelope"/> set took its stream: after that event, in its tenant.</summary>
@@ -4296,7 +4284,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     if (_modelHasFanOuts()) {
       collectivesMark = await _foldBoundaryWithFanOutsAsync(fold, folded, model, floor, collectivesStart!, cancellationToken);
     } else {
-      _foldEvents(fold, folded, enableEventSpans: false, [], cancellationToken);
+      _ = await _foldEventsAsync(fold, folded, fanOutKeys: null, enableEventSpans: false, [], throughLastOwnEvent: false, cancellationToken);
     }
     var purged = fold.PendingPurge;
     var producedByApply = fold.HasWrittenUpdate && fold.UpdatedModel is not null;
@@ -4399,8 +4387,8 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     var events = new global::System.Collections.Generic.List<MessageEnvelope<IEvent>>(folded);
     var keys = new FanOutKeys();
     await _mergeTakenFanOutsAsync(events, 0, floorModel, keys, start, admit: null, cancellationToken);
-    await _foldWithFanOutsAsync(fold, events, keys, enableEventSpans: false, [], throughLastOwnEvent: true, cancellationToken);
-    return _collectivesMarkOf(floor, start.AfterCommitSequence, events);
+    var foldedEvents = await _foldEventsAsync(fold, events, keys, enableEventSpans: false, [], throughLastOwnEvent: true, cancellationToken);
+    return _collectivesMarkOf(floor, start.AfterCommitSequence, foldedEvents);
   }
 
   /// <summary>
