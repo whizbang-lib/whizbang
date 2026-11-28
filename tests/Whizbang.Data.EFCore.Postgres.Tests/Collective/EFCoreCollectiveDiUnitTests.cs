@@ -93,6 +93,22 @@ public class EFCoreCollectiveDiUnitTests {
     await Assert.That(sp.GetServices<ICollectiveEventExecutor>().Any(e => e.ModelType == typeof(JobModel))).IsTrue();
   }
 
+  // #2622: the late-apply rewinds run against the driver's database; a host with none (a context registered by hand)
+  // gets no rewinds, which the worker reads as nothing to rewind.
+  [Test]
+  public async Task AddCollectiveEventsEFCore_RewindsLateFanOuts_OnlyWhenTheHostHasTheDriversDatabaseAsync() {
+    var withDatabase = new ServiceCollection();
+    withDatabase.AddSingleton(new Whizbang.Data.Postgres.PostgresArchiveConnection(
+      static _ => throw new InvalidOperationException("the registration opens no connection"), Schema: null));
+    withDatabase.AddCollectiveEventsEFCore<Ctx>();
+    var withoutDatabase = new ServiceCollection();
+    withoutDatabase.AddCollectiveEventsEFCore<Ctx>();
+
+    await Assert.That(withDatabase.BuildServiceProvider().GetService<IFanOutLateApplyRewinds>())
+      .IsTypeOf<Whizbang.Data.Postgres.Collective.PostgresFanOutLateApplyRewinds>();
+    await Assert.That(withoutDatabase.BuildServiceProvider().GetService<IFanOutLateApplyRewinds>()).IsNull();
+  }
+
   [Test]
   public async Task AddCollectiveEventsEFCore_NullEntries_ThrowsAsync() {
 #pragma warning disable CS0618 // the hand-passed overload is obsolete; its guard still holds

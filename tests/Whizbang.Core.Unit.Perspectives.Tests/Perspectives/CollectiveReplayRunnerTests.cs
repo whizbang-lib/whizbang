@@ -599,6 +599,29 @@ public class CollectiveReplayRunnerTests {
       .Because("a row with no key holds no stream, and a rebuild folds every fan-out itself");
   }
 
+  // A row purged after its key was set holds no key: the events after the purge read no stream for it, live or in a
+  // rebuild, and the live write asks nothing of a row it removed.
+  [Test]
+  public async Task ARowAFanOutTargets_PurgedAfterItTookAKey_TakesNoMoreLive_OrInARebuildAsync() {
+    var applier = new FakeFanOutApplier();
+    var harness = new Harness(applier);
+    var (live, rebuilt) = (TrackedGuid.New().Value, TrackedGuid.New().Value);
+    var set = await harness.AppendAsync(live, new PermissionsSet { UserId = live, Revision = 1, Permissions = "read" });
+    var revoked = await harness.AppendAsync(live, new PermissionsRevoked { UserId = live });
+    await harness.AppendAsync(rebuilt, new PermissionsSet { UserId = rebuilt, Revision = 1, Permissions = "read" });
+    await harness.AppendAsync(rebuilt, new PermissionsRevoked { UserId = rebuilt });
+
+    _ = await harness.Runner.RunWithEventsAsync(live, harness.PerspectiveName, null, [set, revoked], CancellationToken.None);
+    var liveMerges = applier.Merges.Count;
+    _ = await harness.RebuildAsync(rebuilt);
+
+    await Assert.That(await harness.Rows.GetByStreamIdAsync(live)).IsNull().Because("the control: the live batch purged the row");
+    await Assert.That(await harness.Rows.GetByStreamIdAsync(rebuilt)).IsNull().Because("the control: the rebuild purged the row");
+    await Assert.That(liveMerges).IsEqualTo(1).Because("only the event that set the key read its stream; the purge left no key");
+    await Assert.That(applier.Merges.Count - liveMerges).IsEqualTo(1).Because("the rebuild read the key's stream once, at the set");
+    await Assert.That(applier.Checks).IsEmpty().Because("a purged row holds no key, so the live write asks nothing");
+  }
+
   [Test]
   public async Task ARebuild_FoldsTheFanOutsAKeyBringsIn_ThoseCommittedAfterTheEventThatSetItAsync() {
     var applier = new FakeFanOutApplier();
