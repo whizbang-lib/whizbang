@@ -57,6 +57,9 @@ public class DapperPackedVectorTests : PostgresTestBase {
     var steps = all.OfType<VectorPackingGateStep>().ToList();
     await Assert.That(steps).Count().IsEqualTo(1);
     await Assert.That(all.FindIndex(s => s is VectorPackingGateStep)).IsGreaterThan(all.FindIndex(s => s is MetadataTrimGateStep));
+    await Assert.That(all.OfType<StoredVectorConversionStep>().ToList()).Count().IsEqualTo(1);
+    await Assert.That(all.FindIndex(s => s is StoredVectorConversionStep)).IsGreaterThan(all.FindIndex(s => s is VectorPackingGateStep))
+      .Because("#2627: the cycle that opens the gate starts packing the history");
     await steps.Single().RunAsync(scope.ServiceProvider, CancellationToken.None);
 
     var stream = (Guid)TrackedGuid.New();

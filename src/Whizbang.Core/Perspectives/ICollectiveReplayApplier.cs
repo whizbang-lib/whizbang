@@ -90,4 +90,68 @@ public interface ICollectiveReplayApplier {
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AnApplierWrittenBeforeInFlightCollectivesWereKnown_SaysNoneIsInFlightAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rewind_ThatMeetsACollectiveStillInFlight_TakesNoSnapshotAsync</tests>
   bool IsInFlight(IEvent collectiveEvent) => false;
+
+  /// <summary>
+  /// Whether a replay of <paramref name="modelType"/> folds foreign events into its rows (#2621): a perspective declares a
+  /// fan-out to the model (<see cref="IPerspectiveFanOutFor{TModel, TEvent}"/>). A replay asks once, and a model with no
+  /// fan-out folds exactly as it did before fan-outs existed. The default folds none.
+  /// </summary>
+  /// <param name="modelType">The model the row folds into.</param>
+  /// <returns>True when the model has a fan-out.</returns>
+  /// <docs>fundamentals/perspectives/multi-stream#fan-out-on-rebuild-and-rewind</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AnApplierWrittenBeforeReplaysFoldedFanOuts_FoldsNoneAsync</tests>
+  bool FoldsFanOutsInto(Type modelType) => false;
+
+  /// <summary>
+  /// The foreign streams <paramref name="currentModel"/>'s fan-out keys hold (#2621): one per key the model's fan-outs
+  /// declare, for each that holds a stream. A replay reads them after every event of the row's own that it folds: a key
+  /// that takes a stream it has not held yet brings that stream's fan-out events into the fold. The default holds none.
+  /// </summary>
+  /// <param name="modelType">The model the row folds into.</param>
+  /// <param name="currentModel">The row as folded so far.</param>
+  /// <returns>Each stream once.</returns>
+  /// <docs>fundamentals/perspectives/multi-stream#fan-out-on-rebuild-and-rewind</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AnApplierWrittenBeforeReplaysFoldedFanOuts_FoldsNoneAsync</tests>
+  IReadOnlyList<Guid> FanOutKeysOf(Type modelType, object currentModel) => [];
+
+  /// <summary>
+  /// Returns <paramref name="remaining"/>, the events a replay has still to fold, with the fan-out events of
+  /// <paramref name="keyStreamId"/>'s stream that <paramref name="start"/> <see cref="CollectiveReplayStart.Follows"/>
+  /// merged in (#2621), in <see cref="ReplayEventOrder"/> among themselves, each after every remaining event it was
+  /// committed after, as <see cref="InterleaveAfterAsync"/> merges collectives. Only <paramref name="start"/>'s tenant's
+  /// events are merged. Each comes back as a collective: its payload is the foreign event wrapped with its stream and
+  /// tenant, so it folds into the row and moves no checkpoint, and <see cref="ApplyInMemory"/> applies it only while the
+  /// row's key holds its stream. The default merges none.
+  /// </summary>
+  /// <param name="modelType">The model the row folds into.</param>
+  /// <param name="remaining">The events the replay has not folded yet, in replay order.</param>
+  /// <param name="keyStreamId">The foreign stream a key of the row has just taken, or held when the replay started.</param>
+  /// <param name="start">Where the key took the stream (the event that set it, or the replay's start), and the tenant.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The events to fold, in order.</returns>
+  /// <docs>fundamentals/perspectives/multi-stream#fan-out-on-rebuild-and-rewind</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AnApplierWrittenBeforeReplaysFoldedFanOuts_FoldsNoneAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/FanOutReplayApplierTests.cs:InterleaveFanOutsAsync_MergesTheStreamsFanOutsAfterTheStart_InTheTenant_AsCollectivesAsync</tests>
+  Task<IReadOnlyList<MessageEnvelope<IEvent>>> InterleaveFanOutsAsync(
+    Type modelType,
+    IReadOnlyList<MessageEnvelope<IEvent>> remaining,
+    Guid keyStreamId,
+    CollectiveReplayStart start,
+    CancellationToken cancellationToken) => Task.FromResult(remaining);
+
+  /// <summary>
+  /// After a live write of a row a fan-out targets (#2622): rewinds the row when the collective sink applied a foreign
+  /// event of one of its keys, committed after the row took the key, that the write did not fold. That happens only when
+  /// the sink's update ran while the row had no key yet and the row's read ran before the event committed; then the row
+  /// is flagged for a rewind from <see cref="FanOutMissCheck.TriggerEventId"/>, whose replay folds it. A row that missed
+  /// nothing is only read. The default checks nothing.
+  /// </summary>
+  /// <param name="modelType">The model the row folds into.</param>
+  /// <param name="check">The row, its keys and what the write folded.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The rows flagged for a rewind: 0 or 1.</returns>
+  /// <docs>fundamentals/perspectives/multi-stream#live-comes-out-as-replay</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AnApplierWrittenBeforeReplaysFoldedFanOuts_FoldsNoneAsync</tests>
+  Task<int> RewindIfFanOutsMissedAsync(Type modelType, FanOutMissCheck check, CancellationToken cancellationToken) =>
+    Task.FromResult(0);
 }

@@ -30,4 +30,26 @@ public sealed class CollectiveInMemoryExecutor<TModel> : ICollectiveInMemoryExec
       ? CollectiveInMemoryEvaluator<TModel>.Apply(typedSpec, model)
       : model;
   }
+
+  /// <inheritdoc/>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/FanOutReplayApplierTests.cs:FanOutKeyOf_IsTheStreamTheKeyHolds_AStronglyTypedIdByItsGuidAsync</tests>
+  public Guid? FanOutKeyOf(PerspectiveFanOutEntry fanOut, object currentModel) {
+    ArgumentNullException.ThrowIfNull(fanOut);
+    ArgumentNullException.ThrowIfNull(currentModel);
+    return FanOutScopeResolver.StreamOf(CollectiveInMemoryEvaluator<TModel>.ReadKey(fanOut.KeySelector, (TModel)currentModel));
+  }
+}
+
+/// <summary>
+/// The replay applier's <see cref="ICollectiveInMemoryExecutorFactory"/> (#2621): makes the driver-neutral
+/// <see cref="CollectiveInMemoryExecutor{TModel}"/> for a model a fan-out targets.
+/// </summary>
+/// <docs>fundamentals/perspectives/multi-stream#fan-out-on-rebuild-and-rewind</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/FanOutReplayApplierTests.cs:AFanOutModelWithNoRegisteredExecutor_GetsItsReplayTwinFromTheEntryAsync</tests>
+internal sealed class CollectiveInMemoryExecutorFactory : ICollectiveInMemoryExecutorFactory {
+  /// <summary>The one instance: the factory holds nothing.</summary>
+  public static readonly CollectiveInMemoryExecutorFactory Instance = new();
+
+  /// <inheritdoc/>
+  public ICollectiveInMemoryExecutor Create<TModel>() where TModel : class => new CollectiveInMemoryExecutor<TModel>();
 }

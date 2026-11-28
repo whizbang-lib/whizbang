@@ -9,6 +9,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -239,6 +240,138 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     await Assert.That(logger.Entries.Count(e => e.EventId == SINK_EVENTS_NOT_APPLIED_HERE_EVENT_ID)).IsEqualTo(1);
   }
 
+  // #2622: after each fan-out it applies, the sink asks every fan-out of the event's type to rewind the rows it reached
+  // late, with the event's stream and tenant; a fan-out of another type is not asked.
+  [Test]
+  [Timeout(30000)]
+  public async Task CollectiveSink_AFanOutItApplies_AsksEachFanOutOfItsTypeToRewindTheRowsItReachedLateAsync(CancellationToken cancellationToken) {
+    var customer = TrackedGuid.New().Value;
+    var renamedId = TrackedGuid.New().Value;
+    var rewinds = new RecordingRewinds();
+    var work = _sinkWork(customer);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [work],
+      eventStore: _storeOf(customer, _scoped(renamedId, new CustomerRenamed("Ada"), FAN_OUT_TENANT)),
+      registry: new Registry([typeof(CustomerRenamed)]),
+      dispatcher: new RecordingDispatcher(),
+      fanOuts: [_renamedFanOut, _renamedToInvoicesFanOut, _deletedFanOut],
+      lateApplyRewinds: rewinds);
+    coordinator.SinkQueue = [new CollectiveSinkQueueEntry(work.WorkId, renamedId, CommitSequence: 1)];
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await harness.CompletionCapture.EventWorkIdsCaptured(work.WorkId).WaitAsync(cancellationToken);
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(rewinds.Calls).IsEquivalentTo([
+      (_renamedFanOut, customer, FAN_OUT_TENANT, renamedId),
+      (_renamedToInvoicesFanOut, customer, FAN_OUT_TENANT, renamedId),
+    ]).Because("each perspective that fans the rename out has its rows checked once; the delete's fan-out is another type");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task CollectiveSink_ACollectiveItApplies_AsksNoFanOutToRewindAsync(CancellationToken cancellationToken) {
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
+    var dispatcher = new RecordingDispatcher();
+    var rewinds = new RecordingRewinds();
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [_sinkWork(streamId)],
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(eventId, new TestCollectiveEvent { Scope = new TenantCollectiveScope("t") })] } },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
+      dispatcher: dispatcher,
+      fanOuts: [_renamedFanOut],
+      lateApplyRewinds: rewinds);
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await dispatcher.FirstDispatch.WaitAsync(cancellationToken);
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(rewinds.Calls).IsEmpty().Because("a collective's own rows are found by its scope, not by a fan-out key");
+  }
+
+  // #2637: a sync wait on a perspective a foreign event fans out to completes once the sink's apply commits, for each
+  // perspective that fans the event out, and for no other.
+  [Test]
+  [Timeout(30000)]
+  public async Task CollectiveSink_AFanOutItApplies_AnswersASyncWaitOnEachPerspectiveTheEventFansOutToAsync(CancellationToken cancellationToken) {
+    var customer = TrackedGuid.New().Value;
+    var renamedId = TrackedGuid.New().Value;
+    var work = _sinkWork(customer);
+    var tracker = new SyncEventTracker();
+    var orders = TypeNameFormatter.GetPerspectiveName(typeof(OrdersPerspective));
+    var invoices = TypeNameFormatter.GetPerspectiveName(typeof(InvoicesPerspective));
+    const string UNRELATED = "Unrelated.Perspective";
+    foreach (var perspective in new[] { orders, invoices, UNRELATED }) {
+      tracker.TrackEvent(typeof(CustomerRenamed), renamedId, customer, perspective);
+    }
+    var ordersWait = tracker.WaitForPerspectiveEventsAsync([renamedId], orders, Timeout.InfiniteTimeSpan, cancellationToken: cancellationToken);
+    var invoicesApplied = tracker.WhenAppliedAsync(renamedId, invoices, cancellationToken);
+    await Assert.That(ordersWait.IsCompleted).IsFalse().Because("the control: the rename is pending for the orders");
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [work],
+      eventStore: _storeOf(customer, _scoped(renamedId, new CustomerRenamed("Ada"), FAN_OUT_TENANT)),
+      registry: new Registry([typeof(CustomerRenamed)]),
+      dispatcher: new RecordingDispatcher(),
+      syncEventTracker: tracker,
+      fanOuts: [_toOrders, _toInvoices, _toInvoicesByBilling]);
+    coordinator.SinkQueue = [new CollectiveSinkQueueEntry(work.WorkId, renamedId, CommitSequence: 1)];
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    var synced = await ordersWait.WaitAsync(cancellationToken);
+    await invoicesApplied.WaitAsync(cancellationToken);
+    await harness.CompletionCapture.EventWorkIdsCaptured(work.WorkId).WaitAsync(cancellationToken);
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(synced).IsTrue();
+    await Assert.That(tracker.GetPendingEvents(customer, invoices)).IsEmpty()
+      .Because("the invoices perspective fans the rename out by two keys, and is answered once for both");
+    await Assert.That(tracker.GetPendingEvents(customer, UNRELATED).Select(e => e.EventId)).IsEquivalentTo([renamedId])
+      .Because("only the perspectives that fan the event out are answered by its apply");
+  }
+
+  private sealed class OrdersPerspective;
+
+  private sealed class InvoicesPerspective;
+
+  private static readonly PerspectiveFanOutEntry _toOrders = new(
+    typeof(OrdersPerspective), typeof(FanOutOrder), typeof(CustomerRenamed), nameof(FanOutOrder.CustomerId), "customer_id",
+    static (_, _) => throw new InvalidOperationException("the sink never calls Apply itself; the dispatcher does"),
+    (Expression<Func<FanOutOrder, object?>>)(row => row.CustomerId));
+
+  private static readonly PerspectiveFanOutEntry _toInvoices = new(
+    typeof(InvoicesPerspective), typeof(Invoice), typeof(CustomerRenamed), nameof(Invoice.CustomerId), "customer_id",
+    static (_, _) => throw new InvalidOperationException("the sink never calls Apply itself; the dispatcher does"),
+    (Expression<Func<Invoice, object?>>)(row => row.CustomerId));
+
+  private static readonly PerspectiveFanOutEntry _toInvoicesByBilling = new(
+    typeof(InvoicesPerspective), typeof(Invoice), typeof(CustomerRenamed), nameof(Invoice.BillingId), "billing_id",
+    static (_, _) => throw new InvalidOperationException("the sink never calls Apply itself; the dispatcher does"),
+    (Expression<Func<Invoice, object?>>)(row => row.BillingId));
+
+  private sealed class RecordingRewinds : IFanOutLateApplyRewinds {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<(PerspectiveFanOutEntry, Guid, string, Guid)> _calls = new();
+    public IReadOnlyList<(PerspectiveFanOutEntry, Guid, string, Guid)> Calls => [.. _calls];
+
+    public Task<int> RewindRowsAppliedLateAsync(
+        PerspectiveFanOutEntry fanOut, Guid streamId, string tenantId, Guid eventId, CancellationToken cancellationToken) {
+      _calls.Enqueue((fanOut, streamId, tenantId, eventId));
+      return Task.FromResult(0);
+    }
+  }
+
   // ---------- fixtures ----------
 
   private sealed record CustomerRenamed(string Name) : IEvent;
@@ -249,6 +382,23 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
 
   private static readonly PerspectiveFanOutEntry _renamedFanOut = new(
     typeof(object), typeof(FanOutOrder), typeof(CustomerRenamed), nameof(FanOutOrder.CustomerId), "customer_id",
+    static (_, _) => throw new InvalidOperationException("the sink never calls Apply itself; the dispatcher does"),
+    (Expression<Func<FanOutOrder, object?>>)(row => row.CustomerId));
+
+  private sealed class Invoice {
+    public Guid CustomerId { get; init; }
+    public Guid BillingId { get; init; }
+  }
+
+  private sealed record CustomerDeleted : IEvent;
+
+  private static readonly PerspectiveFanOutEntry _renamedToInvoicesFanOut = new(
+    typeof(string), typeof(Invoice), typeof(CustomerRenamed), nameof(Invoice.CustomerId), "customer_id",
+    static (_, _) => throw new InvalidOperationException("the sink never calls Apply itself; the dispatcher does"),
+    (Expression<Func<Invoice, object?>>)(row => row.CustomerId));
+
+  private static readonly PerspectiveFanOutEntry _deletedFanOut = new(
+    typeof(object), typeof(FanOutOrder), typeof(CustomerDeleted), nameof(FanOutOrder.CustomerId), "customer_id",
     static (_, _) => throw new InvalidOperationException("the sink never calls Apply itself; the dispatcher does"),
     (Expression<Func<FanOutOrder, object?>>)(row => row.CustomerId));
 

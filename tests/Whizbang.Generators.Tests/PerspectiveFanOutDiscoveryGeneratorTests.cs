@@ -94,7 +94,9 @@ public class PerspectiveFanOutDiscoveryGeneratorTests {
             TableName: "wh_per_order_summary",
             CreateExecutor: static factory => factory.Create<global::TestApp.OrderSummary>("wh_per_order_summary"),
             Invoker: static (perspective, evt) => ((global::Whizbang.Core.Perspectives.IPerspectiveFanOutFor<global::TestApp.OrderSummary, global::TestApp.CustomerRenamed>)perspective).Apply((global::TestApp.CustomerRenamed)evt)
-          ),
+          ) {
+            CreateInMemoryExecutor = static factory => factory.Create<global::TestApp.OrderSummary>(),
+          },
       """;
     await Assert.That(code).Contains(expected.Replace("\r\n", "\n"));
     await Assert.That(code).Contains("namespace Orders.Service.Generated");

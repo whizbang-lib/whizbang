@@ -135,8 +135,10 @@ public class PerspectiveRunnerPrepareCompleteTests {
   public async Task PerPairAndPrepare_ShareOneFoldOneLoadAndOneProbeAsync() {
     var template = _template();
 
-    await Assert.That(_count(template, "foreach (var envelope in foldEvents)")).IsEqualTo(2)
-      .Because("one fold for the live apply (per-pair and prepare) and one for the replay; a third is a copy that can drift");
+    await Assert.That(_count(template, "_foldEvent(state, envelope,")).IsEqualTo(1)
+      .Because("one fold for the live apply (per-pair, prepare, rebuild and bootstrap, fan-outs or none); a second is a copy that can drift");
+    await Assert.That(_count(template, "_foldReplayEvent(run, envelope)")).IsEqualTo(1)
+      .Because("and one for the replay");
     await Assert.That(_count(template, "_applyEvent(perspective")).IsEqualTo(4);
     await Assert.That(_count(template, "HasStreamEventsBeforeAsync(")).IsEqualTo(1)
       .Because("the eviction probe is made in one place for both entries");

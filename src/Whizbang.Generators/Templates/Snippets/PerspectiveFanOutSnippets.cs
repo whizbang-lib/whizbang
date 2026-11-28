@@ -19,7 +19,9 @@ public class PerspectiveFanOutSnippets {
       TableName: __TABLE__,
       CreateExecutor: static factory => factory.Create<__MODEL__>(__TABLE__),
       Invoker: static (perspective, evt) => ((global::Whizbang.Core.Perspectives.IPerspectiveFanOutFor<__MODEL__, __EVENT__>)perspective).Apply((__EVENT__)evt)
-    ),
+    ) {
+      CreateInMemoryExecutor = static factory => factory.Create<__MODEL__>(),
+    },
     #endregion
   }
 }

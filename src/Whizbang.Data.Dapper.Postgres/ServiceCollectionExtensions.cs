@@ -607,6 +607,10 @@ public static class ServiceCollectionExtensions {
     // every live instance reads them.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, VectorPackingGateStep>(
       VectorPackingGateStep.FromServices));
+    // #2627: after the gate, the step that packs the vector bodies stored before it opened, and unpacks every stored
+    // body while an operator's unpack request is open.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, StoredVectorConversionStep>(
+      StoredVectorConversionStep.FromServices));
     // #2625: before an instance becomes ready, it must still read every vector path its stored bodies hold packed.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<global::Whizbang.Core.Startup.IStartupStep, StoredVectorReadersStartupStep>(
       StoredVectorReadersStartupStep.FromServices));
