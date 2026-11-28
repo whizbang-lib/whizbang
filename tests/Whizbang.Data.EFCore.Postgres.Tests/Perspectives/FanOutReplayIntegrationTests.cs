@@ -219,9 +219,9 @@ public partial class FanOutReplayIntegrationTests : EFCoreTestBase {
 
     await _rewindAsync(sp, order, trigger);
 
-    var row = (await _rowsAsync(sp, [order]))[order];
-    await Assert.That(row.Status).IsEqualTo("Shipped").Because("the control: the rewind folded the trigger onto the snapshot");
-    await Assert.That(row.Name).IsEqualTo("Snapshot").Because("the snapshot already holds the rename committed before its event");
+    var (_, name, status) = (await _rowsAsync(sp, [order]))[order];
+    await Assert.That(status).IsEqualTo("Shipped").Because("the control: the rewind folded the trigger onto the snapshot");
+    await Assert.That(name).IsEqualTo("Snapshot").Because("the snapshot already holds the rename committed before its event");
   }
 
   [Test]
@@ -236,9 +236,9 @@ public partial class FanOutReplayIntegrationTests : EFCoreTestBase {
 
     await _rewindAsync(sp, order, trigger);
 
-    var row = (await _rowsAsync(sp, [order]))[order];
-    await Assert.That(row.Status).IsEqualTo("Shipped");
-    await Assert.That(row.Name).IsEqualTo("Acme Ltd")
+    var (_, name, status) = (await _rowsAsync(sp, [order]))[order];
+    await Assert.That(status).IsEqualTo("Shipped");
+    await Assert.That(name).IsEqualTo("Acme Ltd")
       .Because("the snapshot's row holds the customer, and the rename was committed after the snapshot's event");
   }
 
