@@ -178,7 +178,8 @@ public class TransportConsumerWorkerTests {
 
     // Act
     _ = worker.StartAsync(cts.Token);
-    await transport.WaitForSubscriptionsAsync(2, TimeSpan.FromSeconds(5));
+    // The worker's own signal: the transport's fires inside SubscribeBatchAsync, before the worker holds the subscription.
+    await worker.WaitForSubscriptionsReadyAsync(cts.Token).WaitAsync(TimeSpan.FromSeconds(5));
 
     await worker.PauseAllSubscriptionsAsync();
 
@@ -233,7 +234,8 @@ public class TransportConsumerWorkerTests {
 
     // Act
     _ = worker.StartAsync(cts.Token);
-    await transport.WaitForSubscriptionsAsync(2, TimeSpan.FromSeconds(5));
+    // The worker's own signal: the transport's fires inside SubscribeBatchAsync, before the worker holds the subscription.
+    await worker.WaitForSubscriptionsReadyAsync(cts.Token).WaitAsync(TimeSpan.FromSeconds(5));
 
     await worker.PauseAllSubscriptionsAsync();
     await worker.ResumeAllSubscriptionsAsync();
@@ -289,7 +291,8 @@ public class TransportConsumerWorkerTests {
 
     // Act
     _ = worker.StartAsync(cts.Token);
-    await transport.WaitForSubscriptionsAsync(2, TimeSpan.FromSeconds(5));
+    // The worker's own signal: the transport's fires inside SubscribeBatchAsync, before the worker holds the subscription.
+    await worker.WaitForSubscriptionsReadyAsync(cts.Token).WaitAsync(TimeSpan.FromSeconds(5));
 
     await worker.StopAsync(CancellationToken.None);
 
