@@ -132,7 +132,9 @@ public static class CollectiveEventsEFCoreExtensions {
       sp.GetRequiredService<IEventStoreQuery>(),
       [.. sp.GetServices<ICollectiveInMemoryExecutor>()],
       // The driver's database: a collective stream archived whole is listed from its lifecycle ledger (#1932).
-      sp.GetService<Whizbang.Data.Postgres.PostgresArchiveConnection>()));
+      sp.GetService<Whizbang.Data.Postgres.PostgresArchiveConnection>(),
+      // #2621: a rebuild or rewind of a row a fan-out targets folds the foreign events its key reaches.
+      sp.GetPerspectiveFanOutEntries()));
     return services;
   }
 

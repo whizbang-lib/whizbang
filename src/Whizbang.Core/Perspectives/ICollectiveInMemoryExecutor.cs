@@ -25,4 +25,22 @@ public interface ICollectiveInMemoryExecutor {
   /// <param name="currentModel">The single in-memory model being folded during replay.</param>
   /// <param name="streamId">The row's id (used to evaluate a self-referential <c>Where</c>).</param>
   object ApplyToRow(object spec, object currentModel, Guid streamId);
+
+  /// <summary>
+  /// The stream id <paramref name="currentModel"/>'s key for <paramref name="fanOut"/> holds (#2621): the value of the key
+  /// property <see cref="PerspectiveFanOutEntry.KeySelector"/> names, a <see cref="Guid"/> or a strongly typed id over one,
+  /// as its column stores it. Null when the key holds no stream: it is unset, or <see cref="Guid.Empty"/>. A replay reads it
+  /// to find the foreign events that target the row, and to fold each only while the row's key holds the event's stream.
+  /// </summary>
+  /// <param name="fanOut">A fan-out of <see cref="ModelType"/>.</param>
+  /// <param name="currentModel">The single in-memory model being folded during replay.</param>
+  /// <returns>The stream id the key holds, or null.</returns>
+  /// <exception cref="NotSupportedException">The executor was written before replays folded fan-outs.</exception>
+  /// <docs>fundamentals/perspectives/multi-stream#fan-out-on-rebuild-and-rewind</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/FanOutReplayApplierTests.cs:AnExecutorWrittenBeforeReplaysFoldedFanOuts_RefusesToReadAKeyAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/FanOutReplayApplierTests.cs:FanOutKeyOf_IsTheStreamTheKeyHolds_AStronglyTypedIdByItsGuidAsync</tests>
+  Guid? FanOutKeyOf(PerspectiveFanOutEntry fanOut, object currentModel) =>
+    throw new NotSupportedException(
+      $"{TypeNameFormatter.DisplayName(GetType())} cannot read a fan-out key, so a replay cannot fold the foreign events that "
+      + "target its model's rows. The Postgres drivers' in-memory executor reads it.");
 }

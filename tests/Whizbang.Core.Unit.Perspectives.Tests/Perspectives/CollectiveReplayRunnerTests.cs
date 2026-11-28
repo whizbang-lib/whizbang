@@ -546,7 +546,128 @@ public class CollectiveReplayRunnerTests {
     await Assert.That(snapshots.Taken.Single().CollectivesThrough).IsEqualTo(20L);
   }
 
-  // ===== CollectiveReplayStart =====  // ===== CollectiveReplayStart =====
+  // ===== #2621: a replay folds the fan-outs of the streams the row's keys take =====
+
+  [Test]
+  public async Task AnApplierWrittenBeforeReplaysFoldedFanOuts_FoldsNoneAsync() {
+    IReadOnlyList<MessageEnvelope<IEvent>> remaining = [GeneratedRunners.Envelope(new PermissionsNoted())];
+    ICollectiveReplayApplier minimal = new MinimalApplier();
+
+    await Assert.That(minimal.FoldsFanOutsInto(typeof(PermissionSetModel))).IsFalse();
+    await Assert.That(minimal.FanOutKeysOf(typeof(PermissionSetModel), new PermissionSetModel())).IsEmpty();
+    await Assert.That(await minimal.InterleaveFanOutsAsync(
+        typeof(PermissionSetModel), remaining, Guid.CreateVersion7(), new CollectiveReplayStart(TenantId: null), CancellationToken.None))
+      .IsSameReferenceAs(remaining);
+  }
+
+  [Test]
+  public async Task ARebuild_FoldsTheFanOutsAKeyBringsIn_ThoseCommittedAfterTheEventThatSetItAsync() {
+    var applier = new FakeFanOutApplier();
+    var harness = new Harness(applier);
+    var userId = TrackedGuid.New().Value;
+    var set = await harness.AppendAsync(userId, new PermissionsSet { UserId = userId, Revision = 1, Permissions = "read" });
+    var noted = await harness.AppendAsync(userId, new PermissionsNoted { UserId = userId });
+    harness.Sequences[set.MessageId.Value] = 10;
+    harness.Sequences[noted.MessageId.Value] = 20;
+    applier.Add(commitSequence: 5);
+    applier.Add(commitSequence: 15);
+
+    _ = await harness.RebuildAsync(userId);
+
+    await Assert.That(harness.Rows.Row(userId).Permissions).IsEqualTo("read+f")
+      .Because("the fan-out committed after the event that gave the row its key folds; the one before it reached no row live");
+    await Assert.That(applier.Merges.Single().Start.AfterEventId).IsEqualTo(set.MessageId.Value);
+    await Assert.That(applier.Merges.Single().Key).IsEqualTo(FakeFanOutApplier.Key);
+  }
+
+  // A fan-out-only model counts as one with collectives (it names none), so a rewind folds it in full and from its start.
+  [Test]
+  public async Task ARewindsCatchUpPass_FoldsEachFanOutOnce_FromWhereTheKeyWasTakenAsync() {
+    var applier = new FakeFanOutApplier();
+    var harness = new Harness(applier);
+    var userId = TrackedGuid.New().Value;
+    var set = await harness.AppendAsync(userId, new PermissionsSet { UserId = userId, Revision = 1, Permissions = "read" });
+    harness.Sequences[set.MessageId.Value] = 10;
+    applier.Add(commitSequence: 15);
+    // Another writer appends while the first pass applies, so the rewind makes a catch-up pass.
+    harness.Counter.OnFirstApply = () => harness.AppendAsync(userId, new PermissionsNoted { UserId = userId }).GetAwaiter().GetResult();
+
+    _ = await harness.RewindAsync(userId);
+
+    await Assert.That(harness.Rows.Row(userId).Permissions).IsEqualTo("read+f").Because("the fan-out folded once, across both passes");
+    await Assert.That(applier.Merges.Count).IsEqualTo(2).Because("the control: the catch-up pass read the key's stream again");
+    await Assert.That(applier.Merges.Select(m => m.Start.AfterEventId).Distinct()).IsEquivalentTo([(Guid?)set.MessageId.Value])
+      .Because("the catch-up pass reads the key's stream from where the row took the key, not from the replay's start");
+  }
+
+  [Test]
+  public async Task ABootstrapThroughTheBoundary_OfARowAFanOutTargets_FoldsTheFanOutsBeforeTheBoundaryOnlyAsync() {
+    var applier = new FakeFanOutApplier();
+    var snapshots = new FloorAt(new PermissionSetModel { Revision = 1, Permissions = "read" }, collectivesThrough: 12);
+    var harness = new Harness(applier, snapshots: snapshots, snapshotOptions: new PerspectiveSnapshotOptions { Enabled = true });
+    var userId = TrackedGuid.New().Value;
+    var floorEvent = await harness.AppendAsync(userId, new PermissionsSet { UserId = userId, Revision = 1, Permissions = "read" });
+    var boundary = await harness.AppendAsync(userId, new PermissionsNoted { UserId = userId });
+    var cursor = await harness.AppendAsync(userId, new PermissionsSet { UserId = userId, Revision = 2, Permissions = "write" });
+    harness.Sequences[floorEvent.MessageId.Value] = 10;
+    harness.Sequences[boundary.MessageId.Value] = 20;
+    harness.Sequences[cursor.MessageId.Value] = 30;
+    snapshots.FloorEventId = floorEvent.MessageId.Value;
+    applier.Add(commitSequence: 15);
+    applier.Add(commitSequence: 25);
+
+    var outcome = await harness.Runner.TryBootstrapSnapshotThroughAsync(
+      userId, harness.PerspectiveName, cursor.MessageId.Value, boundary.MessageId.Value, CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(SnapshotBootstrapOutcome.Written);
+    await Assert.That(applier.Merges.Single().Start.AfterEventId).IsEqualTo(floorEvent.MessageId.Value)
+      .Because("the floor's row holds the key, so its stream is read from the floor, as a rewind from it reads it");
+    await Assert.That(snapshots.Taken.Single().Model.Permissions).IsEqualTo("read+f")
+      .Because("the fan-out committed before the boundary folds, the one committed after it does not");
+    await Assert.That(snapshots.Taken.Single().CollectivesThrough).IsEqualTo(20L);
+  }
+
+  /// <summary>
+  /// An applier with one fan-out, by a key the row holds once its revision is set: it names no collective, and merges the
+  /// fan-outs that follow each start by commit sequence, every time it is asked, so a replay has to fold each once itself.
+  /// </summary>
+  private sealed class FakeFanOutApplier : ICollectiveReplayApplier {
+    public static readonly Guid Key = Guid.Parse("0000000f-0000-7000-8000-000000000000");
+    public List<MessageEnvelope<IEvent>> FanOuts { get; } = [];
+    public List<(Guid Key, CollectiveReplayStart Start)> Merges { get; } = [];
+
+    public void Add(long commitSequence) {
+      var envelope = GeneratedRunners.Envelope(new PermissionsBulkGranted());
+      envelope.LocalCommitSequence = commitSequence;
+      FanOuts.Add(envelope);
+    }
+
+    public bool FoldsFanOutsInto(Type modelType) => modelType == typeof(PermissionSetModel);
+
+    public IReadOnlyList<Guid> FanOutKeysOf(Type modelType, object currentModel) =>
+      ((PermissionSetModel)currentModel).Revision > 0 ? [Key] : [];
+
+    public Task<IReadOnlyList<MessageEnvelope<IEvent>>> InterleaveFanOutsAsync(
+        Type modelType, IReadOnlyList<MessageEnvelope<IEvent>> remaining, Guid keyStreamId, CollectiveReplayStart start,
+        CancellationToken cancellationToken) {
+      Merges.Add((keyStreamId, start));
+      return Task.FromResult<IReadOnlyList<MessageEnvelope<IEvent>>>(
+        [.. remaining.Concat(FanOuts.Where(start.Follows)).OrderBy(e => e.LocalCommitSequence ?? long.MaxValue)]);
+    }
+
+    public Task<IReadOnlyList<MessageEnvelope<IEvent>>> InterleaveForReplayAsync(
+        Type modelType, IReadOnlyList<MessageEnvelope<IEvent>> streamEvents, CancellationToken cancellationToken) =>
+      Task.FromResult(streamEvents);
+
+    public Task<IReadOnlyList<MessageEnvelope<IEvent>>> InterleaveAfterAsync(
+        Type modelType, IReadOnlyList<MessageEnvelope<IEvent>> streamEvents, CollectiveReplayStart start, CancellationToken cancellationToken) =>
+      Task.FromResult(streamEvents);
+
+    public object ApplyInMemory(Type modelType, object currentModel, Guid streamId, IEvent collectiveEvent) =>
+      (PermissionSetModel)currentModel with { Permissions = ((PermissionSetModel)currentModel).Permissions + "+f" };
+  }
+
+  // ===== CollectiveReplayStart =====
 
   [Test]
   public async Task AReplayFromTheStart_FollowsEveryCollectiveAsync() {

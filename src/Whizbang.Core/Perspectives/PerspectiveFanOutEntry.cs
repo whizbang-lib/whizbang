@@ -47,6 +47,16 @@ public sealed record PerspectiveFanOutEntry(
   Func<ICollectiveExecutorFactory, ICollectiveEventExecutor>? CreateExecutor = null
 ) {
   /// <summary>
+  /// Makes the replay's in-memory executor for the model (#2621), through the applier's
+  /// <see cref="ICollectiveInMemoryExecutorFactory"/> (<c>factory =&gt; factory.Create&lt;TModel&gt;()</c>, emitted by the
+  /// generator), so a rebuild or rewind folds the fan-out into the model's rows with no registration to remember. Null only
+  /// for an entry written by hand, which then needs the model's in-memory executor registered.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/multi-stream#fan-out-on-rebuild-and-rewind</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/FanOutReplayApplierTests.cs:AFanOutModelWithNoRegisteredExecutor_GetsItsReplayTwinFromTheEntryAsync</tests>
+  public Func<ICollectiveInMemoryExecutorFactory, ICollectiveInMemoryExecutor>? CreateInMemoryExecutor { get; init; }
+
+  /// <summary>
   /// The stable identity of this fan-out: the perspective, its <c>Apply</c> for the event, and the model. Built from names,
   /// so it survives a restart and a redeploy, as <see cref="CollectiveApplyEntry.EntryKey"/> does.
   /// </summary>

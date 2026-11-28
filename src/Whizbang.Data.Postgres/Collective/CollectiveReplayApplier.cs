@@ -52,6 +52,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
   private readonly Func<IReadOnlyList<string>, string?, CancellationToken, Task<IReadOnlyList<Guid>>>? _archivedStreams;
   private readonly IReadOnlyList<string> _collectiveStreamTypes;
   private readonly Func<IReadOnlyList<Guid>, CancellationToken, Task<IReadOnlyDictionary<Guid, CollectiveApplyReach>>>? _reach;
+  private readonly IReadOnlyList<PerspectiveFanOutEntry> _fanOuts;
 
   // The reach each collective a replay merged in was read with, by the event instance the replay folds (#1970). Weak, so
   // an event the replay is done with takes its reach with it.
@@ -95,13 +96,41 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
       IEventStoreQuery eventStoreQuery,
       IReadOnlyList<ICollectiveInMemoryExecutor> executors,
       PostgresArchiveConnection? archive)
-    : this(entries, services, eventStore, eventStoreQuery, executors,
-        archivedStreams: archive is null
+    : this(entries, services, eventStore, eventStoreQuery, executors, archive, fanOuts: []) {
+  }
+
+  /// <summary>
+  /// Creates a replay applier that also folds the host's perspective fan-outs (#2621): a rebuild or rewind of a row a
+  /// fan-out targets folds the foreign events of the streams its key holds, in commit order with the row's own. A fan-out
+  /// model with no registered in-memory executor gets one from its entry
+  /// (<see cref="PerspectiveFanOutEntry.CreateInMemoryExecutor"/>). The EF Core driver registers the applier this way.
+  /// </summary>
+  /// <param name="entries">The host's collective apply handlers, every assembly's (<c>GetCollectiveApplyEntries</c>).</param>
+  /// <param name="services">For resolving handler and perspective instances.</param>
+  /// <param name="eventStore">Reads the collective and foreign events (deserialized) by stream id, archived ones included.</param>
+  /// <param name="eventStoreQuery">Finds the hot collective event stream ids for a tenant.</param>
+  /// <param name="executors">The registered per-model in-memory executors (one per <c>TModel</c>).</param>
+  /// <param name="archive">The service's database, whose ledger lists the archived streams; null finds the hot
+  /// streams only.</param>
+  /// <param name="fanOuts">The host's fan-outs (<c>GetPerspectiveFanOutEntries</c>).</param>
+  /// <docs>fundamentals/perspectives/multi-stream#fan-out-on-rebuild-and-rewind</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/FanOutReplayIntegrationTests.cs:Rebuild_ARenameCommittedAfterOrderPlaced_FoldsIntoTheOrder_AsLiveAsync</tests>
+  public CollectiveReplayApplier(
+      IReadOnlyList<CollectiveApplyEntry> entries,
+      IServiceProvider services,
+      IEventStore eventStore,
+      IEventStoreQuery eventStoreQuery,
+      IReadOnlyList<ICollectiveInMemoryExecutor> executors,
+      PostgresArchiveConnection? archive,
+      IReadOnlyList<PerspectiveFanOutEntry> fanOuts)
+    : this(entries, services, eventStore, eventStoreQuery, executors, new ReplaySources(
+        ArchivedStreams: archive is null
           ? null
           : (streamTypes, tenant, ct) => ArchivedCollectiveStreams.ListAsync(archive, streamTypes, tenant, ct),
-        reach: archive is null
+        Reach: archive is null
           ? null
-          : (eventIds, ct) => CollectiveApplyReach.ReadAsync(archive, eventIds, ct)) {
+          : (eventIds, ct) => CollectiveApplyReach.ReadAsync(archive, eventIds, ct),
+        FanOuts: fanOuts ?? throw new ArgumentNullException(nameof(fanOuts)))) {
   }
 
   /// <summary>Creates a replay applier whose archived collective streams come from <paramref name="archivedStreams"/>.</summary>
@@ -119,7 +148,20 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
       IEventStoreQuery eventStoreQuery,
       IReadOnlyList<ICollectiveInMemoryExecutor> executors,
       Func<IReadOnlyList<string>, string?, CancellationToken, Task<IReadOnlyList<Guid>>>? archivedStreams,
-      Func<IReadOnlyList<Guid>, CancellationToken, Task<IReadOnlyDictionary<Guid, CollectiveApplyReach>>>? reach = null) {
+      Func<IReadOnlyList<Guid>, CancellationToken, Task<IReadOnlyDictionary<Guid, CollectiveApplyReach>>>? reach = null)
+    : this(entries, services, eventStore, eventStoreQuery, executors, new ReplaySources(archivedStreams, reach, FanOuts: [])) {
+  }
+
+
+  /// <summary>Creates a replay applier over the given <paramref name="sources"/>.</summary>
+  internal CollectiveReplayApplier(
+      IReadOnlyList<CollectiveApplyEntry> entries,
+      IServiceProvider services,
+      IEventStore eventStore,
+      IEventStoreQuery eventStoreQuery,
+      IReadOnlyList<ICollectiveInMemoryExecutor> executors,
+      ReplaySources sources) {
+    var (archivedStreams, reach, fanOuts) = sources;
     ArgumentNullException.ThrowIfNull(entries);
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(eventStore);
@@ -129,7 +171,8 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     _services = services;
     _eventStore = eventStore;
     _eventStoreQuery = eventStoreQuery;
-    _executors = executors;
+    _fanOuts = fanOuts;
+    _executors = _withFanOutExecutors(executors, fanOuts);
     _archivedStreams = archivedStreams;
     _reach = reach;
     // Every registered collective type, not only one model's: collectives sharing an ordering key share a stream, and
@@ -265,6 +308,84 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     ArgumentNullException.ThrowIfNull(collectiveEvent);
     return _reaches.TryGetValue(collectiveEvent, out var reach) && reach.Queued;
   }
+
+  /// <inheritdoc/>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/FanOutReplayApplierTests.cs:FoldsFanOutsInto_IsTrueOnlyForAModelAFanOutTargetsAsync</tests>
+  public bool FoldsFanOutsInto(Type modelType) {
+    ArgumentNullException.ThrowIfNull(modelType);
+    return _fanOuts.Any(f => f.ModelType == modelType);
+  }
+
+  /// <inheritdoc/>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/FanOutReplayApplierTests.cs:FanOutKeysOf_NamesEachStreamTheModelsKeysHold_OnceAsync</tests>
+  public IReadOnlyList<Guid> FanOutKeysOf(Type modelType, object currentModel) {
+    ArgumentNullException.ThrowIfNull(modelType);
+    ArgumentNullException.ThrowIfNull(currentModel);
+    List<Guid>? keys = null;
+    ICollectiveInMemoryExecutor? executor = null;
+    foreach (var fanOut in _fanOuts) {
+      if (fanOut.ModelType != modelType) {
+        continue;
+      }
+      executor ??= _resolveExecutor(modelType);
+      if (executor.FanOutKeyOf(fanOut, currentModel) is Guid key && !(keys ??= []).Contains(key)) {
+        keys.Add(key);
+      }
+    }
+    return keys ?? (IReadOnlyList<Guid>)[];
+  }
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// The stream is read by its id, as any stream a replay reads (an index-backed read of <c>(stream_id, version)</c>), for
+  /// the model's fan-out types only, through the event store's archive seam: a foreign stream archived through a prefix
+  /// or whole is read as the replay reads its own (#1931). A foreign event of another tenant, or of none, targets no row
+  /// here, as live. Each is wrapped as the live sink wraps it, with no hops, so the row keeps its own scope as it does
+  /// live, where the set-based update never writes it.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/FanOutReplayApplierTests.cs:InterleaveFanOutsAsync_MergesTheStreamsFanOutsAfterTheStart_InTheTenant_AsCollectivesAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/FanOutReplayApplierTests.cs:InterleaveFanOutsAsync_ForAModelWithNoFanOut_OrAStartWithNoTenant_ReturnsTheEventsUntouchedAsync</tests>
+  public async Task<IReadOnlyList<MessageEnvelope<IEvent>>> InterleaveFanOutsAsync(
+      Type modelType,
+      IReadOnlyList<MessageEnvelope<IEvent>> remaining,
+      Guid keyStreamId,
+      CollectiveReplayStart start,
+      CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(modelType);
+    ArgumentNullException.ThrowIfNull(remaining);
+    ArgumentNullException.ThrowIfNull(start);
+    var types = _fanOuts.Where(f => f.ModelType == modelType).Select(f => f.EventType).Distinct().ToList();
+    if (types.Count == 0 || start.TenantId is not { } tenantId) {
+      return remaining;
+    }
+    var read = new List<MessageEnvelope<IEvent>>();
+    await foreach (var envelope in _eventStore
+        .ReadPolymorphicAsync(keyStreamId, null, types, cancellationToken)
+        .Where(e => e.GetCurrentScope()?.Scope.TenantId == tenantId)
+        .Where(start.Follows)
+        .ConfigureAwait(false)) {
+      read.Add(envelope);
+    }
+    if (read.Count == 0) {
+      return remaining;
+    }
+    // The foreign stream's own replay order (#1627, #1629): a received stream stored out of its producer's order folds in
+    // the order a replay of that stream would.
+    var fanOuts = ReplayEventOrder.Order(read).Select(e => _asFanOut(e, keyStreamId, tenantId)).ToList();
+    await _readReachAsync(fanOuts, cancellationToken).ConfigureAwait(false);
+    return _mergeIntoStreamOrder(remaining, fanOuts);
+  }
+
+  // A foreign event as the replay folds it: a collective of its stream and tenant, at its stream position, with no hops.
+  private static MessageEnvelope<IEvent> _asFanOut(MessageEnvelope<IEvent> envelope, Guid streamId, string tenantId) => new() {
+    MessageId = envelope.MessageId,
+    Payload = PerspectiveFanOutEntry.CollectiveEventFor(envelope.Payload, streamId, tenantId),
+    Hops = [],
+    DispatchContext = envelope.DispatchContext,
+    Flags = envelope.Flags,
+    LocalCommitSequence = envelope.LocalCommitSequence,
+    LocalStreamVersion = envelope.LocalStreamVersion,
+  };
 
   /// <summary>
   /// Whether this replay folds the collective streams archived whole (#1931): a rewind (a replay) always does, as rewinds
@@ -413,6 +534,9 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     ArgumentNullException.ThrowIfNull(currentModel);
     ArgumentNullException.ThrowIfNull(collectiveEvent);
 
+    if (collectiveEvent is FanOutCollectiveEvent fanOut) {
+      return _applyFanOutInMemory(modelType, currentModel, streamId, fanOut);
+    }
     if (collectiveEvent is not ICollectiveEvent evt) {
       return currentModel;
     }
@@ -438,16 +562,58 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     return model;
   }
 
+  /// <summary>
+  /// Folds a foreign event into one row (#2621), through each fan-out of its type to the model: only while the row's key
+  /// holds the event's stream, as the live update finds the row by that key, and only into a row the live sink reached or
+  /// will reach (#1970), as a collective folds.
+  /// </summary>
+  private object _applyFanOutInMemory(Type modelType, object currentModel, Guid rowId, FanOutCollectiveEvent fanOut) {
+    var stream = ((FanOutScope)fanOut.Scope).StreamId;
+    var eventType = fanOut.Event.GetType();
+    _reaches.TryGetValue(fanOut, out var reach);
+    var model = currentModel;
+    ICollectiveInMemoryExecutor? executor = null;
+    foreach (var entry in _fanOuts) {
+      if (entry.ModelType != modelType || entry.EventType != eventType || reach?.Reaches(entry.EntryKey, rowId) == false) {
+        continue;
+      }
+      executor ??= _resolveExecutor(modelType);
+      if (executor.FanOutKeyOf(entry, model) != stream) {
+        continue;
+      }
+      var spec = entry.Invoker(_services.GetRequiredService(entry.PerspectiveType), fanOut.Event);
+      model = executor.ApplyToRow(spec, model, rowId);
+    }
+    return model;
+  }
+
   /// <inheritdoc/>
+  /// <remarks>The model's fan-out types are named too (#2621): a foreign event a fan-out folds is, to a replay, one more
+  /// event of another stream that changes the row, as a collective is.</remarks>
   public IReadOnlyList<string> CollectiveEventTypeNamesFor(string modelTypeName) {
     ArgumentNullException.ThrowIfNull(modelTypeName);
     var name = modelTypeName.StartsWith("global::", StringComparison.Ordinal) ? modelTypeName["global::".Length..] : modelTypeName;
     // A registered collective's model is the concrete model type a generated registration names with
     // typeof, so it always has a CLR full name; there is no unnamed model to skip.
-    return [.. _entries
-      .Where(e => string.Equals(TypeNameFormatter.FormatClrTypeName(e.ModelType).Replace('+', '.'), name, StringComparison.Ordinal))
-      .Select(e => TypeNameFormatter.Format(e.EventType))
+    bool named(Type model) => string.Equals(TypeNameFormatter.FormatClrTypeName(model).Replace('+', '.'), name, StringComparison.Ordinal);
+    return [.. _entries.Where(e => named(e.ModelType)).Select(e => e.EventType)
+      .Concat(_fanOuts.Where(f => named(f.ModelType)).Select(f => f.EventType))
+      .Select(TypeNameFormatter.Format)
       .Distinct(StringComparer.Ordinal)];
+  }
+
+  // The registered executors, then one from each fan-out model's entry that has none (#2621), so a model a fan-out
+  // targets folds on replay with no executor registered by hand.
+  private static List<ICollectiveInMemoryExecutor> _withFanOutExecutors(
+      IReadOnlyList<ICollectiveInMemoryExecutor> registered, IReadOnlyList<PerspectiveFanOutEntry> fanOuts) {
+    var executors = new List<ICollectiveInMemoryExecutor>(registered);
+    var models = new HashSet<Type>(registered.Select(e => e.ModelType));
+    foreach (var fanOut in fanOuts) {
+      if (fanOut.CreateInMemoryExecutor is { } create && models.Add(fanOut.ModelType)) {
+        executors.Add(create(CollectiveInMemoryExecutorFactory.Instance));
+      }
+    }
+    return executors;
   }
 
   private ICollectiveInMemoryExecutor _resolveExecutor(Type modelType) {
@@ -475,6 +641,15 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     }
     return list;
   }
+
+  /// <summary>Where a replay finds what the hot collective read does not: archived streams, the live reach, fan-outs.</summary>
+  /// <param name="ArchivedStreams">Lists the archived streams of the given stream types in a tenant; null lists none.</param>
+  /// <param name="Reach">Reads how far the live sink applied the given collectives (#1970); null folds every one in full.</param>
+  /// <param name="FanOuts">The host's fan-outs (#2621).</param>
+  internal sealed record ReplaySources(
+    Func<IReadOnlyList<string>, string?, CancellationToken, Task<IReadOnlyList<Guid>>>? ArchivedStreams,
+    Func<IReadOnlyList<Guid>, CancellationToken, Task<IReadOnlyDictionary<Guid, CollectiveApplyReach>>>? Reach,
+    IReadOnlyList<PerspectiveFanOutEntry> FanOuts);
 
   // A collective apply reaching replay is guaranteed self-referential by WHIZ106, so it never queries siblings.
   // If one does, fail loudly rather than silently produce a wrong rebuild.
