@@ -1,7 +1,7 @@
 # Vector storage savings, lossless (#2333)
 
-Status: in progress. V1 (#2624) merged. V2 (#2625, migration 720) and V3 (#2626, migration 721) implemented together
-on feat/2625-packed-vectors (2026-11-27). Direction and decisions by the owner on 2026-11-21, 2026-11-25 and 2026-11-27.
+Status: in progress. V1 (#2624) merged. V2 (#2625, migration 720) and V3 (#2626, migration 721) merged (#2641). V4
+(#2627, migration 750) and V5 (#2628) implemented on feat/2627-pack-vectors (2026-11-28). Direction and decisions by the owner on 2026-11-21, 2026-11-25 and 2026-11-27.
 
 V2/V3 as built, where they differ from the design below: the switch is the journal row itself
 (`wh_stored_form_migrations` `wh_event_body:packed-vectors`, written when the gate opens, before the first pack),
@@ -210,6 +210,20 @@ reflection, both drivers where it applies, fixtures serialized from real types, 
   ([storage-telemetry.md](storage-telemetry.md)) on a representative database before V2 and after V4, recording
   `pg_column_size` per vector event and the `wh_event_body` size. Decide on the raw `bytea` form only from these numbers.
 - **Acceptance.** The numbers are recorded in this plan and on the issue.
+- **Measured (2026-11-28, `PackedVectorBodySizeScenarioTests`, local PostgreSQL, 200 events of 3,072 floats, per
+  event, `pg_column_size` after the body column's lz4).** The saving depends on the vectors' digits, not their size:
+
+  | Corpus | JSON numbers, text / stored | Packed, text / stored | Stored change | Table after a rewrite |
+  |---|---|---|---|---|
+  | Full precision (shortest round-trip text, as a model writes it) | 41,218 / 26,613 B | 16,472 / 16,476 B | 38.1% smaller | 35.4% smaller |
+  | Rounded to 4 decimals | 25,850 / 11,351 B | 16,472 / 12,960 B | 14.2% larger | 16.1% larger |
+
+  The raw bits alone store in 12,292 B. Why: jsonb holds each number as a `numeric`, which lz4 compresses in proportion
+  to how few digits it has, while the binary32 bits of a decimal value are close to random, so base64 of them barely
+  compresses. The earlier consumer measurement (about 18.6 KB to 16.4 KB, about 17%) sits between the two corpora: its
+  vectors carry fewer digits than full precision. A raw `bytea` form would reach 12.3 KB in both cases (a further 25%
+  over packed at full precision), and with 4 decimals it is still larger than the JSON numbers. Owner decision pending:
+  whether to keep packing on by default for every vector, or to pack only when it is smaller.
 
 ### V6. Shared vectors for an opted-in field
 
