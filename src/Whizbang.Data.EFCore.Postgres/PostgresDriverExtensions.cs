@@ -407,9 +407,7 @@ public static class PostgresDriverExtensions {
         // packed; otherwise startup stops, naming each type and property.
         // <docs>data/event-store#packed-vectors-no-longer-read</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Singleton<global::Whizbang.Core.Startup.IStartupStep, StoredVectorReadersStartupStep>(
-          static sp => new StoredVectorReadersStartupStep(sp, sp.GetService<global::Whizbang.Core.IMessageTypeCatalog>(),
-            sp.GetService<Microsoft.Extensions.Logging.ILogger<StoredVectorReadersStartupStep>>()
-              ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<StoredVectorReadersStartupStep>.Instance)));
+          StoredVectorReadersStartupStep.FromServices));
         // TURNKEY: the maintenance step that converts audit records written before the pointer default (#1588) to the
         // pointer form (#2326), keeping the bodies of [AuditEvent(IncludeBody = true)] types, under the maintainer duty.
         // <docs>fundamentals/events/system-events#audit-body</docs>

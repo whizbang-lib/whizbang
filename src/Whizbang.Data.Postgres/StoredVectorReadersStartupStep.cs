@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using NpgsqlTypes;
 using Whizbang.Core;
@@ -48,6 +49,21 @@ public sealed partial class StoredVectorReadersStartupStep : IStartupStep {
     _services = services;
     _catalog = catalog;
     _logger = logger;
+  }
+
+  /// <summary>
+  /// Makes the step from the host's services: its message type catalog when one is registered, and its logger, or no
+  /// logging when the host registers none. Both drivers register the step through this.
+  /// </summary>
+  /// <param name="services">The host's services.</param>
+  /// <returns>The step.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorReaderGuardSqlTests.cs:FromServices_MakesTheStep_WithOrWithoutLoggingRegisteredAsync</tests>
+  public static StoredVectorReadersStartupStep FromServices(IServiceProvider services) {
+    ArgumentNullException.ThrowIfNull(services);
+    return new StoredVectorReadersStartupStep(
+      services,
+      services.GetService<IMessageTypeCatalog>(),
+      services.GetService<ILogger<StoredVectorReadersStartupStep>>() ?? NullLogger<StoredVectorReadersStartupStep>.Instance);
   }
 
   /// <inheritdoc />

@@ -18,6 +18,7 @@ namespace Whizbang.Data.Dapper.Postgres.Collective;
 /// <param name="hooks">The collective apply hooks, or null for the framework's defaults.</param>
 /// <docs>fundamentals/perspectives/multi-stream#how-a-fan-out-applies-live</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperFanOutApplyTests.cs:ARename_UpdatesTheCustomersOrders_AndLeavesAnotherCustomersAloneAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperFanOutApplyTests.cs:TheFactory_GivesTheExecutorTheHostsLogger_WhenTheHostRegistersLoggingAsync</tests>
 public sealed class DapperCollectiveExecutorFactory(
     DapperCollectiveTableRegistry tables, CollectiveApplyOptions? options, ILoggerFactory? loggerFactory,
     CollectiveApplyHookRegistry? hooks) : ICollectiveExecutorFactory {

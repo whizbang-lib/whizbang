@@ -147,6 +147,37 @@ public class PerspectiveFanOutDiscoveryGeneratorTests {
 
   [Test]
   [RequiresAssemblyFiles]
+  public async Task Generator_AKeyPropertyNamedAfterAKeyword_IsEscapedInTheSelector_AndCompilesAsync() {
+    const string source = PREAMBLE + """
+        public sealed class LedgerLine {
+          [PhysicalField]
+          [Indexed]
+          public Guid @event { get; init; }
+
+          public string Note { get; init; } = "";
+        }
+
+        public class LedgerLineProjection : IPerspectiveFanOutFor<LedgerLine, CustomerRenamed> {
+          public static FanOutKey<LedgerLine> Targets => FanOut.By<LedgerLine>(o => o.@event);
+
+          public ICollectiveSpec<LedgerLine> Apply(CustomerRenamed e) =>
+            new Spec<LedgerLine>(s => s.SetProperty(o => o.Note, e.Name));
+        }
+        """;
+
+    var (result, _) = GeneratorTestHelper.RunGeneratorWithFullReferences(
+        new PerspectiveFanOutDiscoveryGenerator(), source, "Ledger.Service");
+    var code = GeneratorTestHelper.GetRequiredGeneratedSource(result, FILE);
+
+    await Assert.That(code).Contains("(row => row.@event)")
+      .Because("a key property whose name is a C# keyword must be written verbatim in the generated selector");
+    await Assert.That(code).Contains("KeyProperty: \"event\"")
+      .Because("the key property's name, as the in-memory match reads it, carries no escape");
+    await Assert.That(GeneratorTestHelper.GetGeneratedCompilationErrors<PerspectiveFanOutDiscoveryGenerator>(source)).IsEmpty();
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
   public async Task Generator_WithNoFanOut_EmitsNothingAsync() {
     const string source = PREAMBLE + """
         public sealed record OrderPlaced : IEvent;

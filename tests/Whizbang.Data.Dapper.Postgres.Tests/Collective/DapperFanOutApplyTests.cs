@@ -11,6 +11,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.Dapper.Postgres.Collective;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests.Collective;
 
@@ -110,6 +111,35 @@ public class DapperFanOutApplyTests : PostgresTestBase {
     var flags = (await conn.QueryAsync<bool>($"SELECT (data->>'CustomerDeleted')::boolean FROM {TABLE}")).OrderDescending().ToArray();
     bool[] marked = [true, true, false];
     await Assert.That(flags).IsEquivalentTo(marked);
+  }
+
+  [Test]
+  public async Task TheFactory_GivesTheExecutorTheHostsLogger_WhenTheHostRegistersLoggingAsync() {
+    using var loggers = new RecordingLoggerFactory();
+    var factory = new DapperCollectiveExecutorFactory(new DapperCollectiveTableRegistry(), null, loggers, null);
+
+    var executor = factory.Create<OrderSummary>(TABLE);
+
+    await Assert.That(executor).IsNotNull();
+    await Assert.That(loggers.Categories).Contains(c => c.Contains("DapperCollectiveEventExecutor", StringComparison.Ordinal))
+      .Because("the executor logs its transient retries through the host's logging");
+  }
+
+  private sealed class RecordingLoggerFactory : Microsoft.Extensions.Logging.ILoggerFactory {
+    public List<string> Categories { get; } = [];
+
+    public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) {
+      Categories.Add(categoryName);
+      return Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+    }
+
+    public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) {
+      // Only the categories asked for are recorded; providers are not used.
+    }
+
+    public void Dispose() {
+      // Nothing is held.
+    }
   }
 
   // ---------- the perspective, as a generated entry describes it ----------

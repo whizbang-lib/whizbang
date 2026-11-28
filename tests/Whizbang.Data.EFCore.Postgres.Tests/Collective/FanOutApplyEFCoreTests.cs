@@ -187,7 +187,7 @@ public class FanOutApplyEFCoreTests : EFCoreTestBase {
     await using var insert = conn.CreateCommand();
     insert.CommandText = $"""
       INSERT INTO {TABLE} (id, data, metadata, scope, customer_id)
-      VALUES (@id, jsonb_build_object('CustomerId', @c::text, 'CustomerName', @n, 'CustomerDeleted', false), '{"{}"}'::jsonb, @scope::jsonb, @c)
+      VALUES (@id, jsonb_build_object('CustomerId', @c::text, 'CustomerName', @n, 'CustomerDeleted', false), jsonb_build_object(), @scope::jsonb, @c)
       """;
     insert.Parameters.AddWithValue("id", id);
     insert.Parameters.AddWithValue("c", customer);

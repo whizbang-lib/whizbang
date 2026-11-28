@@ -129,6 +129,19 @@ public class PackedVectorReaderGuardSqlTests : EFCoreTestBase {
     await Assert.That(new PackedVectorsNoLongerReadException("m", inner).InnerException).IsSameReferenceAs(inner);
   }
 
+  [Test]
+  public async Task FromServices_MakesTheStep_WithOrWithoutLoggingRegisteredAsync() {
+    var withLogging = new ServiceCollection().AddLogging().BuildServiceProvider();
+    var withoutLogging = new ServiceCollection().BuildServiceProvider();
+
+    await Assert.That(StoredVectorReadersStartupStep.FromServices(withLogging).Descriptor.Name)
+      .IsEqualTo(StoredVectorReadersStartupStep.STEP_NAME);
+    await Assert.That(StoredVectorReadersStartupStep.FromServices(withoutLogging).Descriptor.Name)
+      .IsEqualTo(StoredVectorReadersStartupStep.STEP_NAME)
+      .Because("a host that registers no logging still gets the step, logging nowhere");
+    await Assert.That(() => StoredVectorReadersStartupStep.FromServices(null!)).Throws<ArgumentNullException>();
+  }
+
   // ===== Helpers =====
 
   private sealed class OneEventCatalog(Type type) : IMessageTypeCatalog {

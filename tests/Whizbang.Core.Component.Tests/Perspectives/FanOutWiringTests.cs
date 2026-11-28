@@ -24,6 +24,11 @@ namespace Whizbang.Core.Tests.Perspectives;
 [Category("CollectiveEvents")]
 public class FanOutWiringTests {
   [Test]
+  public async Task Validator_RequiresTheHostsServicesAsync() {
+    await Assert.That(() => new PerspectiveFanOutWiringValidator(null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
   public async Task ForDispatch_CreatesOneExecutorPerFanOutModelThatHasNone_AndKeepsTheRegisteredOnesAsync() {
     var registered = new ModelExecutor(typeof(InvoiceSummary));
     var factory = new RecordingFactory();
