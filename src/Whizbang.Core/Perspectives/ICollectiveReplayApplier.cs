@@ -99,7 +99,7 @@ public interface ICollectiveReplayApplier {
   /// <param name="modelType">The model the row folds into.</param>
   /// <returns>True when the model has a fan-out.</returns>
   /// <docs>fundamentals/perspectives/multi-stream#fan-out-on-rebuild-and-rewind</docs>
-  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FanOutReplayRunnerTests.cs:AnApplierWrittenBeforeReplaysFoldedFanOuts_FoldsNoneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AnApplierWrittenBeforeReplaysFoldedFanOuts_FoldsNoneAsync</tests>
   bool FoldsFanOutsInto(Type modelType) => false;
 
   /// <summary>
@@ -111,7 +111,7 @@ public interface ICollectiveReplayApplier {
   /// <param name="currentModel">The row as folded so far.</param>
   /// <returns>Each stream once.</returns>
   /// <docs>fundamentals/perspectives/multi-stream#fan-out-on-rebuild-and-rewind</docs>
-  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FanOutReplayRunnerTests.cs:AnApplierWrittenBeforeReplaysFoldedFanOuts_FoldsNoneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AnApplierWrittenBeforeReplaysFoldedFanOuts_FoldsNoneAsync</tests>
   IReadOnlyList<Guid> FanOutKeysOf(Type modelType, object currentModel) => [];
 
   /// <summary>
@@ -130,7 +130,7 @@ public interface ICollectiveReplayApplier {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The events to fold, in order.</returns>
   /// <docs>fundamentals/perspectives/multi-stream#fan-out-on-rebuild-and-rewind</docs>
-  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FanOutReplayRunnerTests.cs:AnApplierWrittenBeforeReplaysFoldedFanOuts_FoldsNoneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:AnApplierWrittenBeforeReplaysFoldedFanOuts_FoldsNoneAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/FanOutReplayApplierTests.cs:InterleaveFanOutsAsync_MergesTheStreamsFanOutsAfterTheStart_InTheTenant_AsCollectivesAsync</tests>
   Task<IReadOnlyList<MessageEnvelope<IEvent>>> InterleaveFanOutsAsync(
     Type modelType,
