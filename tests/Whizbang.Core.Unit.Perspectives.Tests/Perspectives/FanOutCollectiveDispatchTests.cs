@@ -26,6 +26,9 @@ namespace Whizbang.Core.Tests.Perspectives;
 [Category("Unit")]
 [Category("CollectiveEvents")]
 public class FanOutCollectiveDispatchTests {
+  // A fixed instant: these rows are scope-filter fixtures, and no assertion reads their times.
+  private static readonly DateTime _fixedTime = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
   private const string TENANT = "tenant-1";
 
   [Test]
@@ -220,10 +223,10 @@ public class FanOutCollectiveDispatchTests {
   private static PerspectiveRow<StrongOrder> _strongRow(FanOutCustomerId customer, string tenant) => new() {
     Id = Guid.NewGuid(),
     Data = new StrongOrder { CustomerId = customer },
-    Metadata = new PerspectiveMetadata { EventType = "e", EventId = Guid.NewGuid().ToString(), Timestamp = DateTime.UtcNow },
+    Metadata = new PerspectiveMetadata { EventType = "e", EventId = Guid.NewGuid().ToString(), Timestamp = _fixedTime },
     Scope = new PerspectiveScope { TenantId = tenant },
-    CreatedAt = DateTime.UtcNow,
-    UpdatedAt = DateTime.UtcNow,
+    CreatedAt = _fixedTime,
+    UpdatedAt = _fixedTime,
     Version = 1,
   };
 
@@ -247,10 +250,10 @@ public class FanOutCollectiveDispatchTests {
   private static PerspectiveRow<OrderSummary> _row(Guid customer, string tenant, Guid? region = null) => new() {
     Id = Guid.NewGuid(),
     Data = new OrderSummary { CustomerId = customer, RegionId = region ?? Guid.NewGuid() },
-    Metadata = new PerspectiveMetadata { EventType = "e", EventId = Guid.NewGuid().ToString(), Timestamp = DateTime.UtcNow },
+    Metadata = new PerspectiveMetadata { EventType = "e", EventId = Guid.NewGuid().ToString(), Timestamp = _fixedTime },
     Scope = new PerspectiveScope { TenantId = tenant },
-    CreatedAt = DateTime.UtcNow,
-    UpdatedAt = DateTime.UtcNow,
+    CreatedAt = _fixedTime,
+    UpdatedAt = _fixedTime,
     Version = 1,
   };
 

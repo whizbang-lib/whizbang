@@ -115,12 +115,12 @@ public class PerspectiveFanOutPurityTests {
   [RequiresAssemblyFiles]
   [RequiresUnreferencedCode("Finds the analyzers by reflection.")]
   public async Task Whiz104_ASetThatReadsTheClock_IsReportedAsync() {
-    var source = _projection("", "return new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, DateTime.UtcNow.ToString()));");
+    var source = _projection("", "return new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, DateTime.UtcNow.ToString()));"); // review-checks:allow source fed to the analyzer
 
     var reported = await ReportedAsync(source, "WHIZ104");
 
     await Assert.That(reported.Length).IsEqualTo(1);
-    await Assert.That(LocatedText(reported[0])).IsEqualTo("DateTime.UtcNow");
+    await Assert.That(LocatedText(reported[0])).IsEqualTo("DateTime.UtcNow"); // review-checks:allow the text the analyzer reports
   }
 
   [Test]
