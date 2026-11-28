@@ -403,6 +403,11 @@ public static class PostgresDriverExtensions {
         // <docs>data/event-store#packing-gate</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, VectorPackingGateStep>(
           VectorPackingGateStep.FromServices));
+        // TURNKEY: #2627: after the gate, the step that packs the vector bodies stored before it opened, and unpacks
+        // every stored body while an operator's unpack request is open (wh_request_vector_unpack), under the maintainer duty.
+        // <docs>data/event-store#packing-history</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, StoredVectorConversionStep>(
+          StoredVectorConversionStep.FromServices));
         // TURNKEY: #2625: before an instance becomes ready, it must still read every vector path its stored bodies hold
         // packed; otherwise startup stops, naming each type and property.
         // <docs>data/event-store#packed-vectors-no-longer-read</docs>

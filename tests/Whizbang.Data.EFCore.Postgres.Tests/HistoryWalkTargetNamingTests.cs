@@ -33,6 +33,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/EphemeralHistoryReclassifyStep.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/SupersedingHistoryReconcileStep.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/AuditBodyConversionStep.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/StoredVectorConversionStep.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard5")]
 public class HistoryWalkTargetNamingTests : EFCoreTestBase {
@@ -41,6 +42,7 @@ public class HistoryWalkTargetNamingTests : EFCoreTestBase {
     "src/Whizbang.Data.Postgres/EphemeralHistoryReclassifyStep.cs",
     "src/Whizbang.Data.Postgres/SupersedingHistoryReconcileStep.cs",
     "src/Whizbang.Data.Postgres/AuditBodyConversionStep.cs",
+    "src/Whizbang.Data.Postgres/StoredVectorConversionStep.cs",
   ];
 
   [Test]
@@ -75,19 +77,35 @@ public class HistoryWalkTargetNamingTests : EFCoreTestBase {
       OriginalBody = JsonElement.Parse("""{"note": "a full copy of the audited event"}"""),
       Timestamp = DateTimeOffset.UnixEpoch,
     });
+    var vectors = (Guid)TrackedGuid.New();
+    await _storeAsync(conn, vectors, new PackedVectorSampleEvent { PassageId = vectors, Embedding = [0.5f], Lead = new("lead", [0.25f]) });
     var services = _services();
 
     await new EphemeralHistoryReclassifyStep(NullLogger.Instance, 10, 10).ReclassifyAsync(services, CancellationToken.None);
     await new SupersedingHistoryReconcileStep(NullLogger.Instance, 10, 10, () => [typeof(SupersedingHistoryProbeProfile)])
       .ReconcileAsync(services, CancellationToken.None);
     await new AuditBodyConversionStep(NullLogger.Instance, 10, 10).ConvertAsync(services, CancellationToken.None);
+    // #2627: the history pass once the packing gate is open (its journal row), then the unpack of what it packed.
+    await _executeAsync(conn, """
+      INSERT INTO wh_stored_form_migrations (name, table_name, kind, first_applied_at, last_applied_at, applied_library_version)
+      VALUES ('wh_event_body:packed-vectors', 'wh_event_body', 'library', NOW(), NOW(), '2.0.0')
+      """);
+    var packed = await new StoredVectorConversionStep(NullLogger.Instance, 10, 10).ConvertAsync(services, CancellationToken.None);
+    await Assert.That(packed.BodiesChanged).IsGreaterThan(0L).Because("control: the pass packed the stored vector event");
+    // The pass walks every vector type this build declares, most with no events here, so the check is that the walk of
+    // the stored event is keyed by the name the append path stored, and read it.
+    var storedVectorType = (await _textsAsync(conn, "SELECT event_type FROM wh_event_store WHERE stream_id = @s", ("s", vectors))).Single();
+    await Assert.That(await _textsAsync(conn,
+      "SELECT event_type FROM wh_type_history_walks WHERE operation = 'pack-vectors' AND event_type = @t AND events_matched > 0",
+      ("t", storedVectorType))).IsEquivalentTo([storedVectorType])
+      .Because("the pack-vectors walk is keyed by the name the append path stored, and read the event");
+    // One batch: the walk reads the type, and the archive (and so the finish, which clears the walks) waits a cycle.
+    await _executeAsync(conn, "SELECT wh_request_vector_unpack('test', 'walk naming')");
+    var unpacked = await new StoredVectorConversionStep(NullLogger.Instance, 10, 1).ConvertAsync(services, CancellationToken.None);
+    await Assert.That(unpacked.BodiesChanged).IsGreaterThan(0L).Because("control: the unpack walk unpacked the stored vector event");
 
-    foreach (var operation in new[] { "ephemeral", "superseding", "audit-body" }) {
-      var walks = await _textsAsync(conn,
-        "SELECT event_type FROM wh_type_history_walks WHERE operation = @o AND events_total > 0 AND events_matched > 0", ("o", operation));
-      await Assert.That(walks).IsNotEmpty().Because($"the {operation} step walked a type and read its events");
-      await Assert.That(await _walksNamingNoStoredTypeAsync(conn, operation)).IsEmpty()
-        .Because($"every {operation} walk is keyed by a name the append path stored");
+    foreach (var operation in new[] { "ephemeral", "superseding", "audit-body", "unpack-vectors" }) {
+      await _assertWalksNameStoredTypesAsync(conn, operation);
     }
   }
 
@@ -104,6 +122,14 @@ public class HistoryWalkTargetNamingTests : EFCoreTestBase {
   }
 
   // ===== Helpers =====
+
+  private static async Task _assertWalksNameStoredTypesAsync(NpgsqlConnection conn, string operation) {
+    var walks = await _textsAsync(conn,
+      "SELECT event_type FROM wh_type_history_walks WHERE operation = @o AND events_total > 0 AND events_matched > 0", ("o", operation));
+    await Assert.That(walks).IsNotEmpty().Because($"the {operation} step walked a type and read its events");
+    await Assert.That(await _walksNamingNoStoredTypeAsync(conn, operation)).IsEmpty()
+      .Because($"every {operation} walk is keyed by a name the append path stored");
+  }
 
   private static Task<List<string>> _walksNamingNoStoredTypeAsync(NpgsqlConnection conn, string operation) =>
     _textsAsync(conn,

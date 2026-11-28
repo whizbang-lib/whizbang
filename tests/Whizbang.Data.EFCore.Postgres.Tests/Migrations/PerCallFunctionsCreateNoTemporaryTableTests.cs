@@ -46,6 +46,9 @@ public partial class PerCallFunctionsCreateNoTemporaryTableTests {
     ["wh_integrity_exclude"] = "an operator's integrity exclusion, run on request",
     ["wh_integrity_unexclude"] = "an operator's integrity unexclusion, run on request",
     ["wh_integrity_exclusion_apply_batch"] = "applies an operator's queued exclusion request; returns before any table while none is open",
+    // #2627: the stored vector history pass measures each candidate's compressed size, which only a stored row has.
+    ["wh_vector_history_pack_apply"] = "a batch of the one-time vector history pass: at most 20 a maintenance cycle, none once each "
+      + "type's walk is complete, and it returns before any table while the packing gate is closed",
   };
 
   [Test]
