@@ -122,6 +122,13 @@ public static class CollectiveEventsEFCoreExtensions {
         [.. sp.GetServices<ICollectiveEventExecutor>()], sp.GetPerspectiveFanOutEntries(),
         new EFCoreCollectiveExecutorFactory(sp.GetService<CollectiveApplyOptions>(), sp.GetService<CollectiveApplyHookRegistry>())),
       sp.GetService<EventCategoryMetrics>()));
+    // #2622: after the sink applies a fan-out, the rows it reached that had folded a newer event of their own are rewound,
+    // so the live row comes out as its replay. The driver's database is where they are found; a host without one (a
+    // context registered by hand) rewinds none.
+    services.TryAddSingleton<IFanOutLateApplyRewinds>(static sp =>
+      sp.GetService<Whizbang.Data.Postgres.PostgresArchiveConnection>() is { } database
+        ? new PostgresFanOutLateApplyRewinds(database, sp.GetService<TimeProvider>())
+        : null!);
     // Replay/rebuild seam: folds these collective events back into each stream's per-row rebuild so the
     // mutation survives a perspective rebuild (the rebuilder never runs the set-based SQL path). Scoped so it
     // can resolve the request-scoped event-store query. Driver-neutral applier (lives in Whizbang.Data.Postgres).
@@ -132,7 +139,9 @@ public static class CollectiveEventsEFCoreExtensions {
       sp.GetRequiredService<IEventStoreQuery>(),
       [.. sp.GetServices<ICollectiveInMemoryExecutor>()],
       // The driver's database: a collective stream archived whole is listed from its lifecycle ledger (#1932).
-      sp.GetService<Whizbang.Data.Postgres.PostgresArchiveConnection>()));
+      sp.GetService<Whizbang.Data.Postgres.PostgresArchiveConnection>(),
+      // #2621: a rebuild or rewind of a row a fan-out targets folds the foreign events its key reaches.
+      sp.GetPerspectiveFanOutEntries()));
     return services;
   }
 

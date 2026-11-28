@@ -4,6 +4,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
@@ -72,6 +73,23 @@ public static class CollectiveInMemoryEvaluator<TModel> where TModel : class {
     spec.Setters.Compile().Invoke(setters);
     setters.Flush();
     return current;
+  }
+
+  // Each fan-out key selector compiled once; weak, so a selector no entry holds any more takes its delegate with it.
+  private static readonly ConditionalWeakTable<LambdaExpression, Func<TModel, object?>> _keyReaders = [];
+
+  /// <summary>
+  /// The value of the key a fan-out targets rows by (#2621), read from <paramref name="current"/> through the generated
+  /// selector (<see cref="PerspectiveFanOutEntry.KeySelector"/>), compiled once per selector.
+  /// </summary>
+  /// <param name="keySelector">The fan-out's key selector over <typeparamref name="TModel"/>.</param>
+  /// <param name="current">The single in-memory row.</param>
+  /// <returns>The key's value, boxed.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/FanOutReplayApplierTests.cs:FanOutKeyOf_IsTheStreamTheKeyHolds_AStronglyTypedIdByItsGuidAsync</tests>
+  public static object? ReadKey(LambdaExpression keySelector, TModel current) {
+    ArgumentNullException.ThrowIfNull(keySelector);
+    ArgumentNullException.ThrowIfNull(current);
+    return _keyReaders.GetValue(keySelector, static selector => ((Expression<Func<TModel, object?>>)selector).Compile())(current);
   }
 
   // A PerspectiveRow wrapping the single in-memory model. Only Id/Data are meaningful to a self-referential

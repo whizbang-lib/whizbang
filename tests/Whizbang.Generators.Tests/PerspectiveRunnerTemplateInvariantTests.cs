@@ -80,15 +80,16 @@ public class PerspectiveRunnerTemplateInvariantTests {
     // let a hot stream with many pending events stop respecting the deadline.
     var template = _loadTemplate();
 
-    // The apply loop folds foldEvents (the batch, or its last event alone on the jump path). This anchor once named
-    // `events`, which only the rebuild's partition loop iterated, so the check passed on that loop's position instead.
-    await Assert.That(template).Contains("foreach (var envelope in foldEvents)")
+    // The apply loop folds foldEvents (the batch, or its last event alone on the jump path), reading it by index because a
+    // fan-out merge grows what is left to fold (#2621). This anchor once named `events`, which only the rebuild's
+    // partition loop iterated, so the check passed on that loop's position instead.
+    await Assert.That(template).Contains("for (var i = 0; i < foldEvents.Count; i++)")
       .Because("the apply loop is the anchor for the CT check");
     await Assert.That(template).Contains("cancellationToken.ThrowIfCancellationRequested()")
       .Because("the apply loop must call ThrowIfCancellationRequested at the top of each iteration");
 
     // Ensure the CT check appears INSIDE the events foreach (not just somewhere in the file).
-    var foreachIdx = template.IndexOf("foreach (var envelope in foldEvents)", StringComparison.Ordinal);
+    var foreachIdx = template.IndexOf("for (var i = 0; i < foldEvents.Count; i++)", StringComparison.Ordinal);
     var ctCheckIdx = template.IndexOf("cancellationToken.ThrowIfCancellationRequested()", foreachIdx, StringComparison.Ordinal);
     await Assert.That(ctCheckIdx).IsGreaterThan(foreachIdx)
       .Because("the CT check must appear inside the foreach body, not before it");
