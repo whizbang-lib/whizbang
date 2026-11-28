@@ -66,6 +66,9 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(Guid))]
 [JsonSerializable(typeof(double))]
 [JsonSerializable(typeof(float))]
+// #2625: a ReadOnlyMemory<float> marked [VectorField] is a stored vector; its property needs this metadata beside the
+// packed-form converter the generated context attaches.
+[JsonSerializable(typeof(ReadOnlyMemory<float>))]
 // Nullable primitive types for AOT compatibility (value types only)
 [JsonSerializable(typeof(decimal?))]
 [JsonSerializable(typeof(int?))]

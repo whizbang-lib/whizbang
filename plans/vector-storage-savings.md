@@ -1,6 +1,16 @@
 # Vector storage savings, lossless (#2333)
 
-Status: planned (2026-11-26). Direction and decisions by the owner on 2026-11-21 and 2026-11-25. No slice started.
+Status: in progress. V1 (#2624) merged. V2 (#2625, migration 720) and V3 (#2626, migration 721) implemented together
+on feat/2625-packed-vectors (2026-11-27). Direction and decisions by the owner on 2026-11-21, 2026-11-25 and 2026-11-27.
+
+V2/V3 as built, where they differ from the design below: the switch is the journal row itself
+(`wh_stored_form_migrations` `wh_event_body:packed-vectors`, written when the gate opens, before the first pack),
+not a separate `wh_settings` key, so nothing can pack unjournaled; the reader marker is `stored_form_level` 2 in the
+heartbeat metadata (the 537 precedent), not a new column; the journal records the library version only, so an
+application rolled back on the same library is not stood down; the paths are written by the `vector-packing-gate`
+maintenance step before it asks the gate; exports read through the SQL `wh_event_body_wire_form` (redelivery
+selection and trace store), found by a machine-derived inventory test. Owner decision 2026-11-27: `List<float>` and
+`ReadOnlyMemory<float>` are vectors only when marked `[VectorField]`.
 Release: 1.0 (Release 1.0 Planning board). Part of the storage program ([storage-reclamation.md](storage-reclamation.md));
 related to #2438 (shared event bodies stored once by content hash). Tracking: #2333 (question, accepted); each slice
 below is drafted to be filed as its own issue.

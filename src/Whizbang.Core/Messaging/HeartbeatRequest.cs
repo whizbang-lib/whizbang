@@ -57,11 +57,13 @@ public sealed record HeartbeatRequest(
 
   /// <summary>
   /// The stored form level this build reads: 1 reads stored metadata that leaves out the message id and hop scope its row
-  /// holds (#2323). Monotonic: a later stored form raises it, never this one.
+  /// holds (#2323); 2 also reads event bodies whose vectors are stored packed binary32 (#2625). Monotonic: a later stored
+  /// form raises it, never this one, and each level reads every form a lower level reads.
   /// </summary>
   /// <docs>data/event-store#trim-gate</docs>
-  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/HeartbeatRequestStoredFormLevelTests.cs:StoredFormLevel_IsOne_TheLevelThatReadsTrimmedRowsAsync</tests>
-  public const int STORED_FORM_LEVEL = 1;
+  /// <docs>data/event-store#packing-gate</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/HeartbeatRequestStoredFormLevelTests.cs:StoredFormLevel_IsTwo_TheLevelThatReadsTrimmedRowsAndPackedVectorsAsync</tests>
+  public const int STORED_FORM_LEVEL = 2;
 
   /// <summary>
   /// The key in the registry row's metadata (<c>wh_service_instances.metadata</c>) that says which partition ownership

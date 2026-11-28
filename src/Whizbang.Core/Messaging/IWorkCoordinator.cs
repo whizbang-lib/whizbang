@@ -5319,6 +5319,14 @@ public record InboxWork : IHasMessageIdAndStatus, Whizbang.Core.Priority.IPriori
   public string? HandlerName { get; init; }
 
   /// <summary>
+  /// The scheme the row records (#2633): the one it first ran under, so a receptor its handling invokes locally derives
+  /// the first run's ids on a retry. Rides on the typed envelope's dispatch context, as <see cref="HandlerName"/> does.
+  /// Null when the row came from a store that does not record one, and the handling then runs under this build's scheme.
+  /// </summary>
+  /// <docs>fundamentals/identity/whizbang-ids#a-receptor-invoked-locally</docs>
+  public HandlingDerivationScheme? DerivationScheme { get; init; }
+
+  /// <summary>
   /// Current processing status flags.
   /// Indicates which stages have been completed (e.g., Stored, EventStored).
   /// </summary>
@@ -5907,6 +5915,13 @@ public sealed record InboxBatchRow : Whizbang.Core.Priority.IPrioritized {
   /// inbox forensic-preservation slice.
   /// </summary>
   public string? Error { get; init; }
+  /// <summary>
+  /// The scheme the row records (<c>wh_inbox_state.derivation_scheme</c>, #2633): the scheme it first ran under, which the
+  /// claim stamps on a row's first claim and the fetch returns, <see cref="HandlingDerivationScheme.SharedWithCaller"/>
+  /// for a row a build before the column claimed first. Null from a store that does not record one.
+  /// </summary>
+  /// <docs>fundamentals/identity/whizbang-ids#a-receptor-invoked-locally</docs>
+  public HandlingDerivationScheme? DerivationScheme { get; init; }
 }
 
 

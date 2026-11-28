@@ -505,6 +505,25 @@ public static class DiagnosticDescriptors {
       description: "Nested types used in messages must also have serializable properties."
   );
 
+  /// <summary>
+  /// WHIZ064: Info - A vector property an event reaches stays a JSON array in the stored body, because no stored-vector
+  /// path can name it: it is inside a collection element, behind a polymorphic member, or in a type that refers back
+  /// to itself (#2624).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz064</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextStoredVectorTests.cs:Generator_AVectorInsideACollectionElement_GetsNoPath_AndIsReportedAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextStoredVectorTests.cs:Generator_ATypeThatRefersBackToItself_StopsAtTheCycle_AndIsReportedAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextStoredVectorTests.cs:Generator_AVectorBehindAPolymorphicMember_GetsNoPath_AndIsReportedAsync</tests>
+  public static readonly DiagnosticDescriptor VectorStoredAsJsonArray = new(
+      id: "WHIZ064",
+      title: "Vector stays a JSON array in the stored event body",
+      messageFormat: "The vector reached through '{0}' on event '{1}' stays a JSON array in the stored body: {2}",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "Vector properties of stored events are packed as binary32 by default, by path. A vector inside a collection element, behind a polymorphic member, or in a type that refers back to itself has no path, so it is stored as JSON numbers. Nothing is lost; it takes more space."
+  );
+
   // ========================================
   // Guid Usage Diagnostics (WHIZ055-057)
   // ========================================
@@ -908,6 +927,122 @@ public static class DiagnosticDescriptors {
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
       description: "A strong id can be declared by a struct, a property or a parameter, and pinned by [PinnedId] on the struct or [WhizbangId(PinnedId = ...)] on any declaration. One id has one pinned id: the ids it derives depend on it."
+  );
+
+  // ==========================================================================
+  // WHIZ124-WHIZ129, WHIZ143: Perspective fan-out from another stream (#2618, #2620)
+  // A fan-out (IPerspectiveFanOutFor<TModel, TEvent>) targets the rows whose key column holds a foreign event's
+  // stream id. The key is read at build time, so it must be a declared, indexed column that holds a stream id and
+  // changes only through the row's own events. The generator leaves out every declaration that breaks a rule.
+  // ==========================================================================
+
+  /// <summary>
+  /// WHIZ124: Error - a fan-out's Targets does not name one key property of the model (#2618).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz124</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFanOutAnalyzerTests.cs:Whiz124_TargetsThatDoNotNameAKeyProperty_IsAnErrorAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFanOutAnalyzerTests.cs:Whiz124_ATargetsThatDoesNotReturnTheKeyDirectly_IsAnErrorAsync</tests>
+  public static readonly DiagnosticDescriptor FanOutTargetsNamesNoKey = new(
+      id: "WHIZ124",
+      title: "Fan-out Targets does not name a key property",
+      messageFormat: "Targets on '{0}' does not name a key: write FanOut.By<{1}>(row => row.Key), naming one property of {1}, so the build can read the column the foreign event's rows are found by",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "A fan-out's key is read from Targets at build time, to register the column a foreign event's rows are found by. Targets must return FanOut.By<TModel>(row => row.Key) directly (an expression body, a getter that only returns it, or an auto-property initializer), and the selector must read one property off the row. Any other form cannot be read, so the fan-out is never registered."
+  );
+
+  /// <summary>
+  /// WHIZ125: Error - a fan-out's key is not a physical field (#2618).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz125</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFanOutAnalyzerTests.cs:AKeyThatBreaksOneRule_IsReportedForThatRuleAloneAsync</tests>
+  public static readonly DiagnosticDescriptor FanOutKeyNotPhysicalField = new(
+      id: "WHIZ125",
+      title: "Fan-out key is not a physical field",
+      messageFormat: "The fan-out key {0}.{1} that '{2}' targets rows by is not a [PhysicalField], so its rows cannot be found by a column. Mark it [PhysicalField].",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "A foreign event updates the rows whose key column holds its stream id, with one set-based UPDATE filtered on that column, and a rebuild finds the foreign events of a row by the same value. Both need the key to be a real column, which [PhysicalField] declares."
+  );
+
+  /// <summary>
+  /// WHIZ126: Error - a fan-out's key has no index (#2618).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz126</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFanOutAnalyzerTests.cs:AKeyThatBreaksOneRule_IsReportedForThatRuleAloneAsync</tests>
+  public static readonly DiagnosticDescriptor FanOutKeyNotIndexed = new(
+      id: "WHIZ126",
+      title: "Fan-out key is not indexed",
+      messageFormat: "The fan-out key {0}.{1} that '{2}' targets rows by has no [Indexed], so every foreign event would scan the table for its rows. Mark it [Indexed].",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "Every foreign event a fan-out receives filters the perspective's table on the key column. Without an index each one reads the whole table, so the key must carry [Indexed]."
+  );
+
+  /// <summary>
+  /// WHIZ127: Error - a fan-out's key cannot hold a stream id (#2618).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz127</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFanOutAnalyzerTests.cs:AKeyThatBreaksOneRule_IsReportedForThatRuleAloneAsync</tests>
+  public static readonly DiagnosticDescriptor FanOutKeyCannotHoldStreamId = new(
+      id: "WHIZ127",
+      title: "Fan-out key cannot hold a stream id",
+      messageFormat: "The fan-out key {0}.{1} that '{2}' targets rows by is '{3}', which cannot hold a stream id. A key is a Guid or a strongly typed id over one, nullable or not.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "A fan-out targets the rows whose key equals the foreign event's stream id, so the key holds stream ids: a Guid, or a strongly typed id over one. A key of any other type never equals a stream id, and the fan-out would change no row."
+  );
+
+  /// <summary>
+  /// WHIZ128: Error - a set-based apply assigns a fan-out key (#2618).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz128</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFanOutAnalyzerTests.cs:Whiz128_ASetThatAssignsTheKey_IsAnErrorAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFanOutAnalyzerTests.cs:Whiz128_ACollectiveHandlerThatAssignsAFanOutKey_IsAnErrorAsync</tests>
+  public static readonly DiagnosticDescriptor FanOutKeyAssigned = new(
+      id: "WHIZ128",
+      title: "Fan-out key is assigned by a set-based apply",
+      messageFormat: "'{0}' assigns {1}.{2}, the key '{3}' targets rows by. A fan-out key changes only through the row's own events; remove the setter, or change the key in the Apply of the row's own event.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "A rebuild finds the foreign events that target a row from the key values the row takes while its own events are folded. A set-based apply (a fan-out's Apply or a [CollectiveApplyFor] handler) that assigned the key would move rows without the rebuild seeing it, so live and rebuilt rows would differ.",
+      customTags: WellKnownDiagnosticTags.CompilationEnd
+  );
+
+  /// <summary>
+  /// WHIZ129: Error - a fan-out names a type the generated registry cannot reach (#2620).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz129</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFanOutAnalyzerTests.cs:Whiz129_AFanOutTheGeneratedRegistryCannotReach_IsAnErrorAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFanOutAnalyzerTests.cs:Whiz129_AFanOutOfAModelOrEventTheRegistryCannotReach_IsAnErrorAsync</tests>
+  public static readonly DiagnosticDescriptor FanOutTypeUnreachable = new(
+      id: "WHIZ129",
+      title: "Fan-out names a type the generated registry cannot reach",
+      messageFormat: "The fan-out declared by '{0}' names {1}, which is private or protected, so the fan-out registry generated beside it cannot name it. Make {1} internal or public.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "Each fan-out is registered by code generated into the declaring assembly, which casts to the perspective, the model and the foreign event. A private or protected nested type cannot be named there, so the fan-out is left out of the registry and would never apply. Internal and public types are reachable."
+  );
+
+  /// <summary>
+  /// WHIZ143: Error - a fan-out's foreign event is a collective event (#2620).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz143</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFanOutAnalyzerTests.cs:Whiz143_AFanOutOfACollectiveEvent_IsAnErrorAsync</tests>
+  public static readonly DiagnosticDescriptor FanOutOfCollectiveEvent = new(
+      id: "WHIZ143",
+      title: "Fan-out of a collective event",
+      messageFormat: "'{0}' fans out {1}, a collective event. A collective carries its own scope and is applied from its own row; apply it with a [CollectiveApplyFor] handler on {2}, or fan out an event that is not collective.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "The collective sink applies a collective event through its [CollectiveApplyFor] handlers, scoped by the scope the event carries; it never applies a collective as a fan-out, so a fan-out of one would be silently ignored. A collective is applied to a model with a [CollectiveApplyFor] handler; a fan-out is for an ordinary event of another stream."
   );
 
   // ==========================================================================

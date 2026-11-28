@@ -3926,7 +3926,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       "c.source, c.work_id, c.work_stream_id, c.partition_number, c.destination, c.message_type, c.envelope_type, "
       + "c.message_data, c.metadata, c.status, c.attempts, c.is_newly_stored, c.is_orphaned, c.perspective_name, c.priority, "
       + "c.received_at",
-      $"{functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after, @p_outbox_rows, @p_outbox_run, @p_assignment_epoch, @p_assignment_revision, @p_alive_lock_held, @p_lifecycle_phase, @p_acquire_inbox)",
+      $"{functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after, @p_outbox_rows, @p_outbox_run, @p_assignment_epoch, @p_assignment_revision, @p_alive_lock_held, @p_lifecycle_phase, @p_acquire_inbox, @p_derivation_scheme)",
       "@p_id", "@p_part");
     if (request.IncludeOutstanding) {
       // #635: the outstanding-budget counts ride the claim's round trip as a second result set,
@@ -3979,6 +3979,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     });
     // 390 (#1853): no new inbox rows while the caller's inbox working set is at its byte budget.
     cmd.Parameters.Add(new NpgsqlParameter("p_acquire_inbox", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = request.AcquireInbox });
+    // 740 (#2633): this build's derivation scheme, stamped on an inbox row's first claim.
+    cmd.Parameters.Add(new NpgsqlParameter("p_derivation_scheme", NpgsqlTypes.NpgsqlDbType.Smallint) {
+      Value = Whizbang.Data.Postgres.InboxDerivationSchemeSql.CurrentScheme,
+    });
 
     var rows = new List<WorkBatchRow>();
     OutstandingWork? outstanding = null;
@@ -4359,7 +4363,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// ordered (stream, version) under a hard LIMIT.
   /// </summary>
   /// <docs>resilience/stream-integrity</docs>
+  /// <docs>data/event-store#what-leaves-the-database</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SelectRedeliveryEventsTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorExportSqlTests.cs:Redelivery_APackedEvent_IsSelectedInTheWireForm_WhichAPlainReaderReadsAsync</tests>
   public async Task<IReadOnlyList<RedeliveryEvent>> SelectRedeliveryEventsAsync(
     RedeliveryRequest request,
     CancellationToken cancellationToken = default) {
@@ -4369,11 +4375,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var schema = _resolveSchema(typeof(OutboxRecord));
 
     // Every filter but the type, shared by both orders. #2032: only events the answering service authored (no origin,
-    // and a first hop naming it or no service).
-    const string COLUMNS = """
+    // and a first hop naming it or no service). #2626: the body in the wire form, its packed vectors written back as
+    // JSON numbers: the selection is sent to a peer (integrity repair) and re-recorded by the audit rebuild, both over
+    // the transport, so a packed vector never leaves.
+    var columns = $"""
       es.event_id, es.stream_id, es.version::bigint AS version, es.commit_sequence,
-             es.event_type, eb.event_data::text AS event_data, eb.metadata::text AS metadata, es.scope::text AS scope,
-             COALESCE(es.flags, 0) AS flags
+             es.event_type, {schema}.wh_event_body_wire_form(es.event_type, eb.event_data)::text AS event_data,
+             eb.metadata::text AS metadata, es.scope::text AS scope, COALESCE(es.flags, 0) AS flags
       """;
     var filters = $"""
       (@p_tenant IS NULL OR es.scope->>'t' = @p_tenant)
@@ -4403,7 +4411,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         SELECT w.event_id, w.stream_id, w.version, w.commit_sequence, w.event_type, w.event_data, w.metadata, w.scope, w.flags
         FROM (SELECT DISTINCT {normalize}(t) AS name FROM unnest(@p_types::text[]) AS t) AS types
         CROSS JOIN LATERAL (
-          SELECT {COLUMNS}
+          SELECT {columns}
           FROM {schema}.wh_event_store es
           JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
           WHERE es.event_type = types.name
@@ -4417,7 +4425,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         """;
     } else {
       sql = $"""
-        SELECT {COLUMNS}
+        SELECT {columns}
         FROM {schema}.wh_event_store es
         JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
         WHERE ((@p_types::text[]) IS NULL OR es.event_type IN (SELECT {normalize}(t) FROM unnest(@p_types::text[]) AS t))
@@ -6691,8 +6699,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    // 576 (#2551): the fetch that ranks each stream in stream order and returns the rank.
-    var functionName = BuildSchemaQualifiedName(schema, "fetch_inbox_batch_in_stream_order");
+    // 576 (#2551): the fetch that ranks each stream in stream order and returns the rank; 740 (#2633): and the
+    // derivation scheme each row's first claim recorded.
+    var functionName = BuildSchemaQualifiedName(schema, Whizbang.Data.Postgres.InboxDerivationSchemeSql.FETCH_FUNCTION);
 
     var streamArr = AsArray(streamIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -6720,6 +6729,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var priorityOrdinal = _ordinalOrAbsent(reader, "priority");
     // 576 (#2551): the row's position in its stream.
     var streamPositionOrdinal = reader.GetOrdinal("stream_position");
+    // 740 (#2633): the derivation scheme the row first ran under.
+    var derivationSchemeOrdinal = reader.GetOrdinal("derivation_scheme");
     while (await reader.ReadAsync(cancellationToken)) {
       results.Add(new InboxBatchRow {
         MessageId = reader.GetGuid(0),
@@ -6738,6 +6749,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           : null,
         Priority = priorityOrdinal >= 0 ? reader.GetInt32(priorityOrdinal) : 0,
         StreamPosition = reader.GetInt64(streamPositionOrdinal),
+        DerivationScheme = Whizbang.Data.Postgres.InboxDerivationSchemeSql.FromStored(reader.GetInt16(derivationSchemeOrdinal)),
       });
     }
     // #2556: each fetched message is recorded under its stream's claimed tenure, which its result then names.

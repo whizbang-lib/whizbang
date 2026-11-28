@@ -1515,7 +1515,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       LeaseRegistry? leaseRegistry = null, IProcessedEventCacheObserver? processedEventCacheObserver = null,
       CompositeMetrics? compositeMetrics = null, bool lockBusyCountsAsFailure = false,
       ISyncEventTracker? syncEventTracker = null, TimeProvider? timeProvider = null, int predecessorWaitSeconds = 30,
-      PerspectiveMetrics? metrics = null, ILogger<PerspectiveWorker>? logger = null) {
+      PerspectiveMetrics? metrics = null, ILogger<PerspectiveWorker>? logger = null,
+      IReadOnlyList<PerspectiveFanOutEntry>? fanOuts = null) {
     var instanceProvider = new InstanceProvider();
     var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
@@ -1534,6 +1535,9 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     }
     if (receptorInvoker is not null) {
       services.AddSingleton<IReceptorInvoker>(receptorInvoker);
+    }
+    if (fanOuts is not null) {
+      services.AddSingleton<IPerspectiveFanOutRegistry>(new FanOutRegistry(fanOuts));
     }
     services.AddLogging();
     var sp = services.BuildServiceProvider();
@@ -2150,7 +2154,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     private static async IAsyncEnumerable<MessageEnvelope<T>> _empty<T>() { await Task.CompletedTask; yield break; }
   }
 
-  private protected sealed class Registry(IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry {
+  private protected sealed class Registry(IReadOnlyList<Type> eventTypes, IReadOnlyList<Type>? perspectiveEventTypes = null) : IPerspectiveRunnerRegistry {
     // Sink perspective has no runner — return null so the worker would fall through (but the sink guard fires first).
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => null;
     // Must be non-empty: the worker skips building _perspectivesPerEventType when no perspectives are
@@ -2162,7 +2166,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
         "Test.NonCollectivePerspective",
         "global::Test.NonCollectivePerspective",
         "global::Test.Model",
-        [.. eventTypes.Select(TypeNameFormatter.Format)])
+        [.. (perspectiveEventTypes ?? eventTypes).Select(TypeNameFormatter.Format)])
     ];
     public IReadOnlyList<Type> GetEventTypes() => eventTypes;
     public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();

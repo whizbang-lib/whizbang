@@ -442,6 +442,21 @@ public static class GeneratorTestHelper {
   }
 
   /// <summary>
+  /// A compilation of several source files against the full reference set (framework, Whizbang.Core), for a test whose
+  /// subject spans files (a partial type) or that emits one assembly for another to reference.
+  /// </summary>
+  /// <param name="assemblyName">The compilation's assembly name.</param>
+  /// <param name="sources">The source files, one syntax tree each.</param>
+  /// <returns>The compilation.</returns>
+  [RequiresAssemblyFiles()]
+  public static CSharpCompilation CreateCompilationWithFullReferences(string assemblyName, params string[] sources) =>
+    CSharpCompilation.Create(
+        assemblyName: assemblyName,
+        syntaxTrees: [.. sources.Select(static source => CSharpSyntaxTree.ParseText(source))],
+        references: _fullFrameworkReferences(),
+        options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+  /// <summary>
   /// Turns a generator that threw into a loud failure instead of a clean compile.
   /// </summary>
   /// <remarks>

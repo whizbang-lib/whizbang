@@ -88,6 +88,34 @@ public class PostgresDriverExtensionsTests {
   }
 
   [Test]
+  public async Task Postgres_AHostThatDeclaresAFanOut_GetsTheCollectiveDispatcher_WithNothingToAddAsync() {
+    // #2620: a fan-out is applied by the collective dispatcher, so the driver registers it when the host declares one.
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(options => options.UseInMemoryDatabase("FanOutTurnkey"));
+    services.AddSingleton<TurnkeyFanOuts>().AddPerspectiveFanOutRegistryContribution<TurnkeyFanOuts>();
+
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+
+    await Assert.That(services.Any(d => d.ServiceType == typeof(ICollectiveDispatcher))).IsTrue();
+    await Assert.That(services.Any(d => d.ServiceType == typeof(ICollectiveSessionAccessor))).IsTrue();
+  }
+
+  [Test]
+  public async Task Postgres_AHostWithNoFanOut_GetsNoCollectiveDispatcherFromTheDriverAsync() {
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(options => options.UseInMemoryDatabase("NoFanOutTurnkey"));
+
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+
+    await Assert.That(services.Any(d => d.ServiceType == typeof(ICollectiveDispatcher))).IsFalse()
+      .Because("a host's collective registration stays its own; the driver adds it only for a fan-out");
+  }
+
+  private sealed class TurnkeyFanOuts : IPerspectiveFanOutRegistry {
+    public IReadOnlyList<PerspectiveFanOutEntry> Entries => [];
+  }
+
+  [Test]
   public async Task Postgres_WithNonEFCoreDriverOptions_ThrowsInvalidOperationExceptionAsync() {
     // Arrange - create a fake IDriverOptions that isn't EFCoreDriverSelector
     var services = new ServiceCollection();
@@ -268,6 +296,35 @@ public class PostgresDriverExtensionsTests {
     var steps = scope.ServiceProvider.GetServices<Whizbang.Core.Workers.IMaintenanceStep>()
       .OfType<Whizbang.Data.Postgres.AuditBodyConversionStep>().ToList();
     await Assert.That(steps).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task Postgres_RegistersTheVectorPackingGateStep_Once_AfterTheTrimGateAsync() {
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
+
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+
+    await using var sp = services.BuildServiceProvider();
+    using var scope = sp.CreateScope();
+    var steps = scope.ServiceProvider.GetServices<Whizbang.Core.Workers.IMaintenanceStep>().ToList();
+    await Assert.That(steps.OfType<Whizbang.Data.Postgres.VectorPackingGateStep>().ToList()).Count().IsEqualTo(1);
+    await Assert.That(steps.FindIndex(s => s is Whizbang.Data.Postgres.VectorPackingGateStep))
+      .IsGreaterThan(steps.FindIndex(s => s is Whizbang.Data.Postgres.MetadataTrimGateStep));
+  }
+
+  [Test]
+  public async Task Postgres_RegistersTheStoredVectorReadersStartupStep_OnceAsync() {
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
+
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+
+    await using var sp = services.BuildServiceProvider();
+    var steps = sp.GetServices<Whizbang.Core.Startup.IStartupStep>().OfType<Whizbang.Data.Postgres.StoredVectorReadersStartupStep>().ToList();
+    await Assert.That(steps).Count().IsEqualTo(1).Because("every instance checks its packed vector readers before it is ready");
   }
 
   [Test]

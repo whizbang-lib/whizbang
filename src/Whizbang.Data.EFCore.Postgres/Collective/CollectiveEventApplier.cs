@@ -82,7 +82,8 @@ public static class CollectiveEventApplier<TModel> where TModel : class {
 
     // Validate: the entry must match the event's concrete type and the
     // model we're generic over.
-    if (entry.EventType != evt.GetType()) {
+    // #2620: a fan-out entry applies the fan-out wrapper of its event, never the event itself (CollectiveApplyEntry.AppliesTo).
+    if (!entry.AppliesTo(evt)) {
       throw new ArgumentException(
         $"Entry's EventType {TypeNameFormatter.DisplayName(entry.EventType)} does not match the supplied event type {TypeNameFormatter.DisplayName(evt.GetType())}. Registry lookup or dispatch routing is wrong.",
         nameof(entry));

@@ -43,6 +43,19 @@ public class EFCoreCollectiveDiUnitTests {
     await Assert.That(session).IsSameReferenceAs(ctx);
   }
 
+  [Test]
+  public async Task SessionAccessor_ForAContextType_ReturnsTheRegisteredDbContextAsync() {
+    var ctx = _newCtx();
+    var sp = new ServiceCollection().AddSingleton(ctx).BuildServiceProvider();
+
+    var session = new EFCoreCollectiveSessionAccessor(typeof(Ctx)).GetSession(sp);
+
+    await Assert.That(session).IsSameReferenceAs(ctx);
+    await Assert.That(() => new EFCoreCollectiveSessionAccessor(null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => new EFCoreCollectiveSessionAccessor(typeof(Ctx)).GetSession(null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => new ServiceCollection().AddCollectiveEventsEFCore((Type)null!)).Throws<ArgumentNullException>();
+  }
+
   // ── EFCoreCollectiveEventExecutor ──────────────────────────────────────
 
   [Test]
@@ -75,6 +88,8 @@ public class EFCoreCollectiveDiUnitTests {
     await Assert.That(sp.GetService<ICollectiveDispatcher>()).IsNotNull();
     await Assert.That(sp.GetService<ICollectiveSessionAccessor>()).IsTypeOf<EFCoreCollectiveSessionAccessor<Ctx>>();
     await Assert.That(sp.GetServices<ICollectiveScopeResolver>().Any(r => r.ScopeKind == "tenant")).IsTrue();
+    await Assert.That(sp.GetServices<ICollectiveScopeResolver>().Any(r => r.ScopeKind == FanOutScope.KIND)).IsTrue()
+      .Because("#2620: the perspectives' fan-outs run through the same dispatcher, scoped to their key and tenant");
     await Assert.That(sp.GetServices<ICollectiveEventExecutor>().Any(e => e.ModelType == typeof(JobModel))).IsTrue();
   }
 

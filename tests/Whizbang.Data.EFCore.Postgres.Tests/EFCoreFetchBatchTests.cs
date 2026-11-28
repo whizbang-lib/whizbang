@@ -334,14 +334,15 @@ public class EFCoreFetchBatchTests : EFCoreTestBase {
     var conn = await _openAsync(dbContext);
     await using (var replace = conn.CreateCommand()) {
       replace.CommandText = """
-        -- 576 (#2551): the drivers call the stream-ordered fetch, which always returns stream_position.
-        SELECT drop_all_overloads('fetch_inbox_batch_in_stream_order');
-        CREATE FUNCTION fetch_inbox_batch_in_stream_order(p_stream_ids UUID[], p_instance_id UUID, p_max_per_stream INTEGER, p_max_bytes BIGINT)
+        -- 576 (#2551): the drivers call the stream-ordered fetch, which always returns stream_position; 740 (#2633): its
+        -- successor, which always returns derivation_scheme too.
+        SELECT drop_all_overloads('fetch_inbox_batch_with_derivation_scheme');
+        CREATE FUNCTION fetch_inbox_batch_with_derivation_scheme(p_stream_ids UUID[], p_instance_id UUID, p_max_per_stream INTEGER, p_max_bytes BIGINT)
         RETURNS TABLE(message_id UUID, stream_id UUID, handler_name TEXT, message_type TEXT, event_data TEXT,
                       metadata TEXT, scope TEXT, status INTEGER, attempts INTEGER, partition_number INTEGER,
-                      is_event BOOLEAN, stream_position BIGINT)
+                      is_event BOOLEAN, stream_position BIGINT, derivation_scheme SMALLINT)
         LANGUAGE sql AS $$
-          SELECT p_stream_ids[1], p_stream_ids[1], 'MyHandler', 'MyType', '{}', '{}', NULL, 1, 0, 0, false, 1::bigint
+          SELECT p_stream_ids[1], p_stream_ids[1], 'MyHandler', 'MyType', '{}', '{}', NULL, 1, 0, 0, false, 1::bigint, 0::smallint
         $$;
         """;
       await replace.ExecuteNonQueryAsync();

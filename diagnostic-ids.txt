@@ -90,6 +90,7 @@ WHIZ060 | active | Whizbang.Generators | Property uses non-serializable type 'ob
 WHIZ061 | active | Whizbang.Generators | Property uses non-serializable type 'dynamic'
 WHIZ062 | active | Whizbang.Generators | Property uses non-serializable interface type
 WHIZ063 | active | Whizbang.Generators | Nested type contains non-serializable property
+WHIZ064 | active | Whizbang.Generators | Vector stays a JSON array in the stored event body
 WHIZ070 | active | Whizbang.Data.EFCore.Postgres.Generators, Whizbang.Generators | Vector field requires Pgvector.EntityFrameworkCore package
 WHIZ071 | active | Whizbang.Data.EFCore.Postgres.Generators | Vector field requires Pgvector package
 WHIZ072 | active | Whizbang.Generators | Polymorphic Base Type Discovered
@@ -102,7 +103,7 @@ WHIZ102 | active | Whizbang.Generators | Apply method cannot call database I/O
 WHIZ103 | active | Whizbang.Generators | Apply method cannot call HTTP/network operations
 WHIZ104 | active | Whizbang.Generators | Apply method should use event timestamps instead of reading the clock
 WHIZ105 | active | Whizbang.Generators | Perspective injects non-pure service
-WHIZ106 | active | Whizbang.Generators | Collective apply must not query other perspectives at apply time
+WHIZ106 | active | Whizbang.Generators | Set-based apply must depend only on the row and the event
 WHIZ107 | active | Whizbang.Generators | Apply never receives a null model
 WHIZ108 | active | Whizbang.Generators | An overwrite-only perspective's Apply must not read its current model
 WHIZ109 | active | Whizbang.Generators | Apply handles an event no perspective interface lists
@@ -120,6 +121,12 @@ WHIZ120 | active | Whizbang.Generators | Pinned Type Renamed Without Ledger Ackn
 WHIZ121 | active | Whizbang.Generators | Pinned-Type Ledger Entry Has No Living Type
 WHIZ122 | active | Whizbang.Generators | Pinned-Type Ledger Could Not Be Parsed
 WHIZ123 | active | Whizbang.Generators | A strong id is pinned two ways
+WHIZ124 | active | Whizbang.Generators | Fan-out Targets does not name a key property
+WHIZ125 | active | Whizbang.Generators | Fan-out key is not a physical field
+WHIZ126 | active | Whizbang.Generators | Fan-out key is not indexed
+WHIZ127 | active | Whizbang.Generators | Fan-out key cannot hold a stream id
+WHIZ128 | active | Whizbang.Generators | Fan-out key is assigned by a set-based apply
+WHIZ129 | active | Whizbang.Generators | Fan-out names a type the generated registry cannot reach
 WHIZ130 | active | Whizbang.Generators | Perspective mixes ephemeral and Sourced Apply methods
 WHIZ131 | active | Whizbang.Generators | Rebuild or rewind of an ephemeral-only perspective
 WHIZ132 | active | Whizbang.Generators | Receptor turns an ephemeral message into a Sourced event
@@ -132,6 +139,7 @@ WHIZ139 | active | Whizbang.Generators | Read model keeps an allowed mixed-strea
 WHIZ140 | active | Whizbang.Generators | Perspective shares stream event types with a group but joins none
 WHIZ141 | active | Whizbang.Generators | Stream group has no announcing member with a row evictor
 WHIZ142 | active | Whizbang.Generators | Bridge on a sole stream-group membership
+WHIZ143 | active | Whizbang.Generators | Fan-out of a collective event
 WHIZ150 | active | Whizbang.Generators | Minted composite constructed outside the mint
 WHIZ151 | active | Whizbang.Generators | Command type has more than one inbox receptor
 WHIZ160 | active | Whizbang.Generators | Type Name Composed By Hand

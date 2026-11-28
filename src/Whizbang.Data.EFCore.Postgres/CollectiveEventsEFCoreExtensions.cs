@@ -70,9 +70,31 @@ public static class CollectiveEventsEFCoreExtensions {
     return _addCollectiveEvents<TDbContext>(services, applyEntries);
   }
 
+  /// <summary>
+  /// The collective registration for a context known by its type (#2620), as the EF Core Postgres driver registers it
+  /// for a host that declares a perspective fan-out. The same registration as
+  /// <see cref="AddCollectiveEventsEFCore{TDbContext}(IServiceCollection)"/>, so calling either, or both, gives one.
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <param name="dbContextType">The <see cref="DbContext"/> type the applies run on.</param>
+  /// <returns>The service collection.</returns>
+  /// <docs>fundamentals/perspectives/multi-stream#how-a-fan-out-applies-live</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_AHostThatDeclaresAFanOut_GetsTheCollectiveDispatcher_WithNothingToAddAsync</tests>
+  public static IServiceCollection AddCollectiveEventsEFCore(this IServiceCollection services, Type dbContextType) {
+    ArgumentNullException.ThrowIfNull(dbContextType);
+    services.TryAddSingleton<ICollectiveSessionAccessor>(new EFCoreCollectiveSessionAccessor(dbContextType));
+    return _addCollectiveEvents(services, handPassed: null);
+  }
+
   private static IServiceCollection _addCollectiveEvents<TDbContext>(
       IServiceCollection services, IReadOnlyList<CollectiveApplyEntry>? handPassed)
       where TDbContext : DbContext {
+    services.TryAddSingleton<ICollectiveSessionAccessor, EFCoreCollectiveSessionAccessor<TDbContext>>();
+    return _addCollectiveEvents(services, handPassed);
+  }
+
+  private static IServiceCollection _addCollectiveEvents(
+      IServiceCollection services, IReadOnlyList<CollectiveApplyEntry>? handPassed) {
     // Apply policy (batching + statement_timeout) from PostgresOptions. TryAdd so a consumer can register
     // their own CollectiveApplyOptions first to override.
     services.TryAddSingleton(sp => {
@@ -87,13 +109,18 @@ public static class CollectiveEventsEFCoreExtensions {
     // Collective apply-hook registry, seeded with the framework defaults (whizbang.timestamps: stamp updated_at
     // + bump version). TryAdd so a consumer can register their own (defaults + custom hooks) first to override.
     services.TryAddSingleton(_ => WhizbangApplyHooks.CreateCollectiveWithDefaults());
-    services.TryAddSingleton<ICollectiveSessionAccessor, EFCoreCollectiveSessionAccessor<TDbContext>>();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ICollectiveScopeResolver, TenantCollectiveScopeResolver>());
+    // #2620: the perspectives' fan-outs run through the same dispatcher, each scoped to its key and tenant.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<ICollectiveScopeResolver, FanOutScopeResolver>(
+      static sp => new FanOutScopeResolver(sp.GetPerspectiveFanOutEntries())));
     services.TryAddSingleton<ICollectiveDispatcher>(sp => new CollectiveDispatcher(
       sp,
-      sp.GetCollectiveApplyEntries(handPassed),
+      sp.GetCollectiveDispatchEntries(handPassed),
       [.. sp.GetServices<ICollectiveScopeResolver>()],
-      [.. sp.GetServices<ICollectiveEventExecutor>()],
+      // #2620: each fan-out model gets its executor here, so a declared fan-out needs no executor registration.
+      CollectiveExecutors.ForDispatch(
+        [.. sp.GetServices<ICollectiveEventExecutor>()], sp.GetPerspectiveFanOutEntries(),
+        new EFCoreCollectiveExecutorFactory(sp.GetService<CollectiveApplyOptions>(), sp.GetService<CollectiveApplyHookRegistry>())),
       sp.GetService<EventCategoryMetrics>()));
     // Replay/rebuild seam: folds these collective events back into each stream's per-row rebuild so the
     // mutation survives a perspective rebuild (the rebuilder never runs the set-based SQL path). Scoped so it

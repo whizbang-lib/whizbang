@@ -22,6 +22,14 @@ BeforeAll {
   $script:Workflows = Join-Path $Root '.github' 'workflows'
   $script:CiLines = Get-Content -LiteralPath (Join-Path $Workflows 'ci.yml')
 
+  # Several tests put a stand-in dotnet first on PATH and start pwsh. Where pwsh is a .NET tool, its launcher would
+  # find the stand-in and run it instead of pwsh, so pwsh is started the way this one was: by its own host.
+  $hostPath = [Environment]::ProcessPath
+  $script:PwshCommand = @(if ((Split-Path -Leaf $hostPath) -match '^dotnet(\.exe)?$') { $hostPath; Join-Path $PSHOME 'pwsh.dll' } else { $hostPath })
+  function script:Invoke-Pwsh {
+    & $PwshCommand[0] @($PwshCommand | Select-Object -Skip 1) @args
+  }
+
   # The baseline every library is compared with, read from the MSBuild file itself.
   $targets = [xml](Get-Content -Raw -LiteralPath (Join-Path $Root 'Directory.Build.targets'))
   $script:Baseline = @($targets.Project.PropertyGroup.PackageValidationBaselineVersion |
@@ -190,6 +198,18 @@ Describe 'Every pack is followed by a public API comparison that reports each br
     ($compare -join "`n") | Should -Match 'Compare-PublicApi\.ps1'
     ($compare | Where-Object { $_ -match '^\s+API_BREAKS_BLOCK:' }) | Should -Not -BeNullOrEmpty -Because 'whether an API break fails the run is stated where the step runs'
   }
+
+  It 'blocks on a break in every workflow that sets API_BREAKS_BLOCK, now the breaks on develop are recorded' {
+    $settings = @(foreach ($file in Get-ChildItem -LiteralPath $Workflows -Filter '*.yml') {
+        foreach ($line in Get-Content -LiteralPath $file.FullName) {
+          if ($line -match '^\s+API_BREAKS_BLOCK:\s*(.+?)\s*$') { [pscustomobject]@{ File = $file.Name; Value = $Matches[1] } }
+        }
+      })
+    $settings.File | Should -Contain 'reusable-pack.yml' -Because 'the rule below is not vacuous'
+    $settings.File | Should -Contain 'nuget-publish.yml' -Because 'the rule below is not vacuous'
+    @($settings | Where-Object Value -NE "'true'" | ForEach-Object { "$($_.File): $($_.Value)" }) |
+      Should -BeNullOrEmpty -Because 'the breaks on develop were accepted and recorded (#2605); any further break must fail the run until it is recorded'
+  }
 }
 
 Describe 'Compare-PublicApi.ps1 reads the findings of package validation (#2605)' {
@@ -240,7 +260,7 @@ Describe 'Compare-PublicApi.ps1 decides the step''s result (#2605)' -Skip:$IsWin
       $env:GITHUB_STEP_SUMMARY = $summary
       $env:API_BREAKS_BLOCK = $Block
       try {
-        $out = & pwsh -NoProfile -File $ScriptPath -Version '0.4521.0-queue.1' -OutputDirectory (Join-Path $bin 'out') 2>&1 | ForEach-Object { "$_" }
+        $out = Invoke-Pwsh -NoProfile -File $ScriptPath -Version '0.4521.0-queue.1' -OutputDirectory (Join-Path $bin 'out') 2>&1 | ForEach-Object { "$_" }
         $code = $LASTEXITCODE
       } finally {
         $env:PATH = $oldPath
@@ -298,5 +318,195 @@ Describe 'Compare-PublicApi.ps1 decides the step''s result (#2605)' -Skip:$IsWin
   It 'refuses an unknown blocking value rather than guessing' {
     $result = Invoke-Compare @('Successfully created package.') 0 'maybe'
     $result.ExitCode | Should -Be 2
+  }
+}
+
+Describe 'Compare-PublicApi.ps1 -UpdateSuppressions records every break in the projects'' suppression files (#2605)' -Skip:$IsWindows {
+  BeforeAll {
+    $script:ScriptPath = Join-Path $Root '.github' 'scripts' 'Compare-PublicApi.ps1'
+
+    # A repository with one project and its suppression file, and a stand-in dotnet that records its arguments and,
+    # like the SDK with ApiCompatGenerateSuppressionFile=true, rewrites the file without its comments.
+    function script:New-FakeRepository([string]$Existing, [int]$PackExit = 0) {
+      $repo = Join-Path $TestDrive "repo-$([guid]::NewGuid())"
+      $project = Join-Path $repo 'src' 'A'
+      New-Item -ItemType Directory -Path (Join-Path $project 'obj' 'Release' 'net10.0') -Force | Out-Null
+      Set-Content -LiteralPath (Join-Path $repo 'Directory.Build.targets') -Value '<Project><PropertyGroup><PackageValidationBaselineVersion>9.8.0</PackageValidationBaselineVersion></PropertyGroup></Project>'
+      Set-Content -LiteralPath (Join-Path $project 'obj' 'Release' 'net10.0' 'Microsoft.NET.ApiCompat.ValidatePackage.semaphore') -Value ''
+      if ($Existing) { Set-Content -LiteralPath (Join-Path $project 'CompatibilitySuppressions.xml') -Value $Existing -NoNewline }
+      $bin = Join-Path $repo '.bin'
+      New-Item -ItemType Directory -Path $bin | Out-Null
+      $generated = Join-Path $bin 'generated.xml'
+      Set-Content -LiteralPath $generated -NoNewline -Value "<?xml version=`"1.0`" encoding=`"utf-8`"?>`n<Suppressions xmlns:xsi=`"http://www.w3.org/2001/XMLSchema-instance`" xmlns:xsd=`"http://www.w3.org/2001/XMLSchema`">`n  <Suppression>`n    <DiagnosticId>CP0002</DiagnosticId>`n    <Target>M:A.B.C</Target>`n  </Suppression>`n</Suppressions>"
+      $fake = @(
+        '#!/usr/bin/env bash'
+        "printf '%s\n' `"`$@`" > '$bin/args.txt'"
+        "pwd > '$bin/cwd.txt'"
+        "if [ -e '$project/obj/Release/net10.0/Microsoft.NET.ApiCompat.ValidatePackage.semaphore' ]; then echo stale > '$bin/semaphore.txt'; fi"
+        "cp '$generated' '$project/CompatibilitySuppressions.xml'"
+        "exit $PackExit"
+      ) -join "`n"
+      Set-Content -LiteralPath (Join-Path $bin 'dotnet') -Value $fake
+      chmod +x (Join-Path $bin 'dotnet')
+      return [pscustomobject]@{ Root = $repo; Bin = $bin; File = (Join-Path $project 'CompatibilitySuppressions.xml') }
+    }
+
+    function script:Invoke-Update($Repo, [string[]]$Arguments = @()) {
+      $oldPath = $env:PATH
+      $env:PATH = "$($Repo.Bin)$([IO.Path]::PathSeparator)$oldPath"
+      Remove-Item Env:API_BREAKS_BLOCK -ErrorAction SilentlyContinue
+      try {
+        $out = Invoke-Pwsh -NoProfile -File $ScriptPath -UpdateSuppressions -RepositoryRoot $Repo.Root -OutputDirectory (Join-Path $Repo.Bin 'out') @Arguments 2>&1 | ForEach-Object { "$_" }
+        $code = $LASTEXITCODE
+      } finally { $env:PATH = $oldPath }
+      $argsFile = Join-Path $Repo.Bin 'args.txt'
+      return [pscustomobject]@{
+        ExitCode = $code
+        Output   = ($out -join "`n")
+        Args     = if (Test-Path -LiteralPath $argsFile) { @(Get-Content -LiteralPath $argsFile) } else { @() }
+      }
+    }
+  }
+
+  It 'packs with validation on and the SDK writing the suppression files, building first, without API_BREAKS_BLOCK' {
+    $repo = New-FakeRepository
+    $result = Invoke-Update $repo
+    $result.ExitCode | Should -Be 0
+    $result.Args | Should -Contain 'pack'
+    $result.Args | Should -Contain '-p:WhizbangApiCheck=true'
+    $result.Args | Should -Contain '-p:ApiCompatGenerateSuppressionFile=true'
+    $result.Args | Should -Not -Contain '--no-build' -Because 'one command regenerates the files from the current source'
+    (Get-Content -LiteralPath (Join-Path $repo.Bin 'cwd.txt')) | Should -Match "[/\\]$([regex]::Escape((Split-Path -Leaf $repo.Root)))$" -Because 'it packs the repository it is pointed at'
+
+  }
+
+  It 'stamps the baseline''s own version when none is given, so no library reports an identity change' {
+    $result = Invoke-Update (New-FakeRepository)
+    $result.Args | Should -Contain '-p:Version=9.8.0-local'
+  }
+
+  It 'stamps the version it is given' {
+    $result = Invoke-Update (New-FakeRepository) @('-Version', '9.9.0-test.1')
+    $result.Args | Should -Contain '-p:Version=9.9.0-test.1'
+  }
+
+  It 'refuses to guess a version when the repository names no baseline' {
+    $repo = New-FakeRepository
+    Set-Content -LiteralPath (Join-Path $repo.Root 'Directory.Build.targets') -Value '<Project></Project>'
+    $result = Invoke-Update $repo
+    $result.ExitCode | Should -Be 2
+    $result.Args | Should -BeNullOrEmpty
+  }
+
+  It 'deletes the incremental validation markers first, so a packed tree is compared again' {
+    $repo = New-FakeRepository
+    Invoke-Update $repo | Out-Null
+    Test-Path -LiteralPath (Join-Path $repo.Bin 'semaphore.txt') | Should -BeFalse -Because 'a leftover semaphore makes the SDK skip validation and write nothing'
+  }
+
+  It 'keeps the comment that says why the breaks are intended, which the SDK replaces with its own when it rewrites the file' {
+    $header = "<!-- #1: why these breaks are intended. -->`n"
+    $existing = "<?xml version=`"1.0`" encoding=`"utf-8`"?>`n$header<Suppressions>`n</Suppressions>"
+    $repo = New-FakeRepository -Existing $existing
+    $result = Invoke-Update $repo
+    $result.ExitCode | Should -Be 0
+    $text = Get-Content -Raw -LiteralPath $repo.File
+    $text | Should -BeLike "<?xml version=`"1.0`" encoding=`"utf-8`"?>`n$header<Suppressions *"
+    $text | Should -Match '<Target>M:A\.B\.C</Target>' -Because 'the regenerated suppressions are kept'
+  }
+
+  It 'names each suppression file and how many breaks it records' {
+    $result = Invoke-Update (New-FakeRepository)
+    $result.Output | Should -Match 'src/A/CompatibilitySuppressions\.xml: 1 suppression'
+  }
+
+  It 'fails when the pack fails' {
+    $result = Invoke-Update (New-FakeRepository -PackExit 1)
+    $result.ExitCode | Should -Be 1
+    $result.Output | Should -Match '::error::'
+  }
+}
+
+# The SDK itself, not a stand-in: a library packed against a baseline package it removed two members from. Only this
+# shows that a break recorded in CompatibilitySuppressions.xml passes the blocking comparison while one that is not
+# recorded fails it, and that -UpdateSuppressions writes a file the comparison then accepts. Needs the .NET SDK, as the
+# script-tests job has; it fails rather than skips without it.
+Describe 'With breaks blocking, a recorded break passes and an unrecorded one fails (#2605)' -Skip:$IsWindows {
+  BeforeAll {
+    $script:ScriptPath = Join-Path $Root '.github' 'scripts' 'Compare-PublicApi.ps1'
+    $script:Lib = Join-Path $TestDrive 'lib'
+    New-Item -ItemType Directory -Path $Lib | Out-Null
+    $script:Baseline = Join-Path $TestDrive 'baseline'
+
+    function script:Write-Library([string]$Members) {
+      Set-Content -LiteralPath (Join-Path $Lib 'Lib.cs') -Value "namespace Lib;`npublic static class Api {`n  public static int Kept() => 0;`n$Members`n}"
+    }
+    # Outside the repository, so none of its Directory.Build files apply; the baseline is a local package.
+    Set-Content -LiteralPath (Join-Path $Lib 'Lib.csproj') -Value @"
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>Whizbang.PackageValidationProbe</PackageId>
+    <EnablePackageValidation>true</EnablePackageValidation>
+    <PackageValidationBaselinePath Condition="'`$(UseBaseline)' == 'true'">$Baseline/Whizbang.PackageValidationProbe.1.0.0.nupkg</PackageValidationBaselinePath>
+  </PropertyGroup>
+</Project>
+"@
+    Write-Library "  public static int First() => 1;`n  public static int Second() => 2;"
+    & dotnet pack (Join-Path $Lib 'Lib.csproj') -c Release -o $Baseline -p:Version=1.0.0 2>&1 | Out-Null
+    $script:BaselinePacked = $LASTEXITCODE
+
+    # The current version removes both members; this suppression file records only the first.
+    Write-Library ''
+    $script:Suppressions = Join-Path $Lib 'CompatibilitySuppressions.xml'
+    Set-Content -LiteralPath $Suppressions -Value @'
+<?xml version="1.0" encoding="utf-8"?>
+<!-- First() was removed on purpose. -->
+<Suppressions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Lib.Api.First</Target>
+    <Left>lib/net10.0/Lib.dll</Left>
+    <Right>lib/net10.0/Lib.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+</Suppressions>
+'@
+
+    function script:Invoke-Real([string[]]$Arguments) {
+      $env:API_BREAKS_BLOCK = 'true'
+      try {
+        $out = Invoke-Pwsh -NoProfile -File $ScriptPath -RepositoryRoot $Lib -Version '1.1.0' -OutputDirectory (Join-Path $TestDrive "out-$([guid]::NewGuid())") @Arguments 2>&1 | ForEach-Object { "$_" }
+        return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($out -join "`n") }
+      } finally { Remove-Item Env:API_BREAKS_BLOCK -ErrorAction SilentlyContinue }
+    }
+  }
+
+  It 'packs the baseline, so the comparisons below compare something' {
+    $BaselinePacked | Should -Be 0
+    Test-Path -LiteralPath (Join-Path $Baseline 'Whizbang.PackageValidationProbe.1.0.0.nupkg') | Should -BeTrue
+  }
+
+  It 'fails on the unrecorded break, reports it, and does not report the recorded one' {
+    & dotnet build (Join-Path $Lib 'Lib.csproj') -c Release -p:Version=1.1.0 -p:UseBaseline=true 2>&1 | Out-Null
+    $env:UseBaseline = 'true'
+    try { $result = Invoke-Real @() } finally { Remove-Item Env:UseBaseline -ErrorAction SilentlyContinue }
+    $result.ExitCode | Should -Be 1
+    $result.Output | Should -Match '::error title=Public API break CP0002 in Lib::.*Lib\.Api\.Second\(\)'
+    $result.Output | Should -Not -Match '::error title=[^\n]*Lib\.Api\.First\(\)'
+  }
+
+  It 'passes once -UpdateSuppressions has recorded the remaining break, keeping the file''s comment' {
+    $env:UseBaseline = 'true'
+    try {
+      $update = Invoke-Real @('-UpdateSuppressions')
+      $update.ExitCode | Should -Be 0
+      $result = Invoke-Real @()
+    } finally { Remove-Item Env:UseBaseline -ErrorAction SilentlyContinue }
+    $text = Get-Content -Raw -LiteralPath $Suppressions
+    $text | Should -Match 'M:Lib\.Api\.Second'
+    $text | Should -Match '<!-- First\(\) was removed on purpose\. -->'
+    $result.ExitCode | Should -Be 0
+    $result.Output | Should -Not -Match '::error'
   }
 }

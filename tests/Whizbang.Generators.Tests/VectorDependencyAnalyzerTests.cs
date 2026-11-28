@@ -50,6 +50,30 @@ public class VectorDependencyAnalyzerTests {
   }
 
   /// <summary>
+  /// #2625: a [VectorField] on an event's property marks a vector of the stored body, not a pgvector column, so it
+  /// needs no package.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_VectorFieldOnAnEvent_NeedsNoPackageAsync() {
+    const string source = """
+            using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestApp;
+
+            public record Embedded : IEvent {
+              [VectorField(3)]
+              public System.Collections.Generic.List<float> Embedding { get; init; } = [];
+            }
+            """;
+
+    var diagnostics = await VectorAnalyzerTestHelper.GetDiagnosticsWithoutPgvectorAsync<VectorDependencyAnalyzer>(source);
+
+    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ070")).IsEmpty();
+  }
+
+  /// <summary>
   /// Test 2: Multiple [VectorField] properties without package reference emits WHIZ070 for each.
   /// Covers: Multiple properties detection
   /// </summary>

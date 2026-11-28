@@ -378,6 +378,36 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
       .Because("the drain publishes the row's number; a fetch that drops it ships every message undeclared");
   }
 
+  /// <summary>
+  /// #2633: the claim stamps this build's derivation scheme on an inbox row's first claim, in the update it already
+  /// makes, and the fetch returns each row's: the shared scheme for a row a build before the column claimed first.
+  /// </summary>
+  [Test]
+  public async Task ClaimAndFetch_RecordAndReturnTheSchemeTheRowFirstRanUnderAsync() {
+    var c = _build();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    await c.StoreInboxMessagesAsync([_makeInbox(msgId, streamId, _makeHops(streamId))], partitionCount: 100);
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await conn.ExecuteAsync(
+      "INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at) VALUES (@i, 'test', 'test-host', 1, NOW(), NOW())",
+      new { i = instanceId });
+
+    // This coordinator claims perspective streams only and refuses the inbox rows it leased, after the claim committed
+    await Assert.That(async () => await c.ClaimWorkAsync(new ClaimWorkRequest(instanceId, "test", "test-host", 1, PartitionCount: 1))).Throws<NotImplementedException>();
+    await conn.ExecuteAsync("UPDATE wh_inbox_state SET chain_emitted_at = NOW() WHERE message_id = @m", new { m = msgId });
+    var claimed = await c.FetchInboxBatchAsync([streamId], instanceId, maxPerStream: 10);
+    await conn.ExecuteAsync("UPDATE wh_inbox_state SET derivation_scheme = NULL WHERE message_id = @m", new { m = msgId });
+    var unrecorded = await c.FetchInboxBatchAsync([streamId], instanceId, maxPerStream: 10);
+
+    await Assert.That(claimed.Single().DerivationScheme).IsEqualTo(HandlingDerivationScheme.OwnHandling)
+      .Because("the claim handed this build's scheme, and the row's first claim recorded it");
+    await Assert.That(unrecorded.Single().DerivationScheme).IsEqualTo(HandlingDerivationScheme.SharedWithCaller)
+      .Because("a row that records none was claimed first by a build before the column");
+  }
+
   /// <summary>#2556: each fetched inbox row is recorded under its stream's claimed tenure, so its commit names that epoch.</summary>
   [Test]
   public async Task FetchInboxBatchAsync_RecordsEachRowUnderItsStreamsClaimedTenureAsync() {

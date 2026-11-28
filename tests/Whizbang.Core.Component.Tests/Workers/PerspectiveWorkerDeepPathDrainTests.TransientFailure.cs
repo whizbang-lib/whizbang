@@ -184,11 +184,13 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     var coordinator = new DrainWorkCoordinator();
     coordinator.EnqueueStreamEventsError(new InvalidOperationException("a defect in the fetch"));
     var logger = new EventIdSignalingLogger<PerspectiveWorker>();
+    // One consumer loop: the worker's consumers share the drain channel, so with more than one a second loop could take
+    // some of the queued signals into a batch of its own and the report would be split in two.
     var (worker, harness, provider) = _createWorker(coordinator, new DrainEventStore(), _registry(new DrainRunner()),
-      logger: logger, timeProvider: new FakeTimeProvider());
+      configure: o => o.MaxConcurrentDrainConsumers = 1, logger: logger, timeProvider: new FakeTimeProvider());
     await using var _ = provider;
     using var cts = new CancellationTokenSource();
-    // Queued before the worker starts, so its first batch takes all three signals.
+    // Queued before the worker starts, so its one consumer's first batch takes all three signals.
     await harness.EnqueueDrainStreamAsync(twice, cts.Token);
     await harness.EnqueueDrainStreamAsync(twice, cts.Token);
     await harness.EnqueueDrainStreamAsync(once, cts.Token);

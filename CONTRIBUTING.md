@@ -344,6 +344,21 @@ pull request. A retired ID is never reused. `.github/scripts/Test-DiagnosticIds.
 scripts", fails an ID that is unlisted, listed but undefined, listed under the wrong project, given two meanings,
 or outside the `WHIZ` form (a frozen set of legacy IDs that shipped before it excepted).
 
+### Public API breaks
+
+Every library package is compared with the last stable release when it is packed, and a break of binary or source
+compatibility (a removed or changed public member, a member added to an interface) fails the `Pack` job unless it
+is recorded. Pre-1.0 a break is allowed; the record is what matters. After making one on purpose, regenerate the
+suppression files and commit them with the change:
+
+```bash
+pwsh .github/scripts/Compare-PublicApi.ps1 -UpdateSuppressions
+```
+
+It rewrites each `src/<Project>/CompatibilitySuppressions.xml`. Review the diff, and give a new file a comment
+that says why the breaks are intended. [`docs/RELEASING.md`](docs/RELEASING.md), "Public API baseline", has the
+details, including running the comparison locally.
+
 ### Package Versions and Lock Files
 
 - Package versions live in `Directory.Packages.props` (central package management); a project's

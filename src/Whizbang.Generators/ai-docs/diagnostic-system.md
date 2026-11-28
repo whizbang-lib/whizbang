@@ -194,7 +194,8 @@ description: "A receptor implementation was discovered and will be registered."
 | WHIZ070-072 | Vector fields, polymorphic base types |
 | WHIZ080-099 | RPC handlers, message tags, generator notices |
 | WHIZ100-108 | Perspective purity and the current model (Apply methods) |
-| WHIZ110-122 | Pinned type identity and the pinned-type ledger |
+| WHIZ110-123 | Pinned type identity and the pinned-type ledger |
+| WHIZ124-128 | Perspective fan-out from another stream: the key column and who may assign it |
 | WHIZ130-171 | Ephemeral events, stream groups, minted composites, command ownership, type-name keys, scope inheritance |
 | WHIZ200-202 | Perspective model shape: opaque storage, circular references |
 | WHIZ300-309 | Perspective model consistency and indexes |

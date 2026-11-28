@@ -90,6 +90,10 @@ public partial class MigrationTransactionBoundaryGuardTests {
       "576 (#2551): fetch_inbox_batch's body (230, redirected by 162) under a new name for its new result: status, "
       + "attempts, partition_number, error, processed_at, lease_expiry and instance_id are read from wh_inbox_state (alias ist); "
       + "wh_inbox supplies the message, its priority and its arrival_position, none of which moved",
+    ["fetch_inbox_batch_with_derivation_scheme"] =
+      "740 (#2633): fetch_inbox_batch_in_stream_order's body (576) under a new name for its new result: status, attempts, "
+      + "partition_number, error, processed_at, lease_expiry, instance_id and the new derivation_scheme are read from "
+      + "wh_inbox_state (alias ist); wh_inbox supplies the message, its priority and its arrival_position, none of which moved",
     ["wh_reconcile_redelivered_bundle_by_first_hop"] =
       "253 (#1843, #1844): reads error from wh_inbox_state (alias ist) to find the children store_inbox_messages "
       + "refused to restore; wh_inbox supplies only stream_id, scope and message_type, none of which moved",

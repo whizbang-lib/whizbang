@@ -15,6 +15,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// <see cref="HeartbeatRequest.MetadataJson"/>, so no caller can leave the marker out.
 /// </summary>
 /// <docs>data/event-store#trim-gate</docs>
+/// <docs>data/event-store#packing-gate</docs>
 public class HeartbeatRequestStoredFormLevelTests {
   private static readonly Guid _instance = Guid.Parse("01900000-0000-7000-8000-000000002323");
 
@@ -55,11 +56,12 @@ public class HeartbeatRequestStoredFormLevelTests {
   }
 
   [Test]
-  public async Task StoredFormLevel_IsOne_TheLevelThatReadsTrimmedRowsAsync() {
+  public async Task StoredFormLevel_IsTwo_TheLevelThatReadsTrimmedRowsAndPackedVectorsAsync() {
     using var json = JsonDocument.Parse(new HeartbeatRequest(_instance, "svc", "host", 1).MetadataJson());
 
-    await Assert.That(json.RootElement.GetProperty("stored_form_level").GetInt32()).IsEqualTo(1)
-      .Because("migration 537's gate opens for level 1 or higher under this key; raising it is a new stored form, never this one");
+    await Assert.That(json.RootElement.GetProperty("stored_form_level").GetInt32()).IsEqualTo(2)
+      .Because("migration 537's trim gate opens for level 1 or higher and migration 720's packing gate for level 2 or "
+        + "higher under this key (#2625); raising it is a new stored form, never this one");
   }
 
   [Test]

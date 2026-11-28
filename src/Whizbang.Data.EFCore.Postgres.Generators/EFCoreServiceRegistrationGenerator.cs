@@ -2766,7 +2766,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       string registerAssociationsCode;
       string associationsHashExpr;
       if (matchingPerspectives.Count > 0) {
-        registerAssociationsCode = $"await dbContext.RegisterPerspectiveAssociationsAsync(\"{dbContext.Schema}\", \"{assemblyName}\", logger, cancellationToken, _collectiveEventTypes.Value);";
+        registerAssociationsCode = $"await dbContext.RegisterPerspectiveAssociationsAsync(\"{dbContext.Schema}\", \"{assemblyName}\", logger, cancellationToken, _collectiveEventTypes.Value, _fanOutEventTypes.Value);";
         // Reference the AssociationsHash constant emitted by EFCorePerspectiveAssociationGenerator
         // in this same assembly. Using the generated const avoids recomputing the hash here.
         associationsHashExpr = $"global::{assemblyName}.Generated.EFCorePerspectiveAssociationExtensions.AssociationsHash";

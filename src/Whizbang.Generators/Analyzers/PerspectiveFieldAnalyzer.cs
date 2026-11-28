@@ -20,6 +20,7 @@ namespace Whizbang.Generators.Analyzers;
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class PerspectiveFieldAnalyzer : DiagnosticAnalyzer {
   private const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
+  private const string EVENT_INTERFACE = "Whizbang.Core.IEvent";
   private const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
   private const string STORAGE_ATTRIBUTE = "Whizbang.Core.Perspectives.PerspectiveStorageAttribute";
   // FieldStorageMode.Split
@@ -46,7 +47,8 @@ public sealed class PerspectiveFieldAnalyzer : DiagnosticAnalyzer {
       return;
     }
     var location = LocationUtilities.ApplicationOrFallback(vector, Location.None, context.CancellationToken);
-    if (property.Type is not IArrayTypeSymbol { Rank: 1, ElementType.SpecialType: SpecialType.System_Single }) {
+    if (property.Type is not IArrayTypeSymbol { Rank: 1, ElementType.SpecialType: SpecialType.System_Single }
+        && !(_isEvent(property.ContainingType) && _isStoredVectorCollection(property.Type))) {
       context.ReportDiagnostic(Diagnostic.Create(
         DiagnosticDescriptors.VectorFieldInvalidType, location, TypeNameUtilities.SimpleName(property.ContainingType), property.Name));
     }
@@ -55,6 +57,22 @@ public sealed class PerspectiveFieldAnalyzer : DiagnosticAnalyzer {
         DiagnosticDescriptors.VectorFieldInvalidDimensions, location, TypeNameUtilities.SimpleName(property.ContainingType), property.Name, dimensions));
     }
   }
+
+  /// <summary>
+  /// Whether <paramref name="type"/> is an event: there <c>[VectorField]</c> marks a vector of the stored body (#2625),
+  /// which may also be a <c>List&lt;float&gt;</c>, a <c>ReadOnlyMemory&lt;float&gt;</c> or an
+  /// <c>IReadOnlyList&lt;float&gt;</c>, rather than a pgvector column.
+  /// </summary>
+  private static bool _isEvent(INamedTypeSymbol type) =>
+    type.AllInterfaces.Any(static i => TypeNameUtilities.IsNamed(i, EVENT_INTERFACE));
+
+  private static bool _isStoredVectorCollection(ITypeSymbol type) =>
+    type is INamedTypeSymbol { IsGenericType: true } named
+    && named.TypeArguments[0].SpecialType == SpecialType.System_Single
+    && _storedVectorCollections.Any(d => TypeNameUtilities.IsNamed(named.OriginalDefinition, d));
+
+  private static readonly string[] _storedVectorCollections =
+    ["System.Collections.Generic.List<T>", "System.ReadOnlyMemory<T>", "System.Collections.Generic.IReadOnlyList<T>"];
 
   private static void _analyzeType(SymbolAnalysisContext context) {
     var type = (INamedTypeSymbol)context.Symbol;

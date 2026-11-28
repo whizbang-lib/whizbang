@@ -87,7 +87,8 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
     ArgumentNullException.ThrowIfNull(evt);
     ArgumentNullException.ThrowIfNull(dbContextOrSession);
 
-    var eventType = evt.GetType();
+    // #2620: a fan-out is tagged with the foreign event it carries, so its spans and metrics name the event that changed.
+    var eventType = evt is FanOutCollectiveEvent fanOut ? fanOut.Event.GetType() : evt.GetType();
     var eventTypeName = TypeNameFormatter.DisplayName(eventType);
     var eventNamespace = TypeNameFormatter.NamespaceOf(eventType) ?? string.Empty;
 
@@ -103,7 +104,7 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
       activity.SetTag(TAG_EVENT_ID, collectiveEventId);
     }
 
-    var matchingEntries = _entries.Where(e => e.EventType == eventType).ToList();
+    var matchingEntries = _entries.Where(e => e.AppliesTo(evt)).ToList();
     if (matchingEntries.Count == 0) {
       activity?.SetTag(TAG_HANDLER_COUNT, 0);
       // No perspective subscribed — not an error. Still increment the
