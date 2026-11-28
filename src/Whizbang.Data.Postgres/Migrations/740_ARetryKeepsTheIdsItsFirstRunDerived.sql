@@ -33,6 +33,9 @@
 --              A lease an instance renews without a claim (462) keeps its stamp: the same build renews it. A build
 --              before 740 that retries a row a later build first claimed derives its own build's ids: a build cannot
 --              honor a scheme it does not know.
+-- Reversal: reversible (the down file restores 566's claim_orphaned_inbox, 598's claim_work, 563's and 162's release
+--           functions verbatim and drops the fetch and the column; a recorded scheme is lost with the column, and a row
+--           retried after the reversal runs under the shared scheme, the behavior of the build the reversal returns to)
 -- Dependencies: 162 (wh_inbox_state, release_unprocessed_inbox), 563 (release_unstarted_leases), 566
 --               (claim_orphaned_inbox), 576 (fetch_inbox_batch_in_stream_order), 598 (claim_work)
 -- Objects: wh_inbox_state.derivation_scheme, claim_orphaned_inbox, claim_work, release_unstarted_leases,

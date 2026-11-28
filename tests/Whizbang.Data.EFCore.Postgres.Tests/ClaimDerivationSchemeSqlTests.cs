@@ -120,6 +120,50 @@ public class ClaimDerivationSchemeSqlTests : EFCoreTestBase {
       .Because("the first claim ran the row, and its scheme stands");
   }
 
+  [Test]
+  [Arguments("claim_work")]
+  [Arguments("claim_orphaned_inbox")]
+  [Arguments("release_unstarted_leases")]
+  [Arguments("release_unprocessed_inbox")]
+  [Arguments("fetch_inbox_batch_with_derivation_scheme")]
+  public async Task EachFunction740Defines_HasExactlyOneOverloadAsync(string function) {
+    // Widening a signature with a defaulted parameter beside the old one would make a call that matches both through
+    // defaults ambiguous (42725); 740 drops every overload before it defines the new one
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE p.proname = @f AND n.nspname = current_schema()";
+    cmd.Parameters.AddWithValue("f", function);
+
+    await Assert.That(Convert.ToInt64(await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture)).IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task AnEarlierBuildsClaim_InItsOwnArgumentList_ResolvesToTheOneClaimAsync() {
+    // The argument lists a build before 740 sends: the EF Core coordinator's 22 positional arguments, and the Dapper
+    // coordinator's 11 positional and five named ones. Each resolves to the one claim_work, and stamps nothing.
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var instance = await _registerInstanceAsync(conn);
+    var id = await _seedUnclaimedInboxAsync(conn);
+
+    foreach (var call in new[] {
+      "SELECT * FROM claim_work(@inst, 'test', 'test-host', 1, 100, 1, 300, 0.5, NULL, FALSE, NULL, FALSE, INTERVAL '30 minutes', 10, INTERVAL '4 hours', NULL, NULL, NULL, NULL, FALSE, NULL, TRUE)",
+      "SELECT * FROM claim_work(@inst, 'test', 'test-host', 1, 100, 1, 300, 0.5, NULL, FALSE, NULL, p_assignment_epoch => NULL, p_assignment_revision => NULL, p_alive_lock_held => FALSE, p_lifecycle_phase => NULL, p_acquire_inbox => TRUE)",
+    }) {
+      await using var cmd = conn.CreateCommand();
+      cmd.CommandText = call;
+      cmd.Parameters.AddWithValue("inst", instance);
+      await using var reader = await cmd.ExecuteReaderAsync();
+      while (await reader.ReadAsync()) {
+        // drain
+      }
+    }
+
+    await Assert.That(await _attemptsAsync(conn, id)).IsEqualTo(1).Because("the first call claimed the row; the second found it leased");
+    await Assert.That(await _recordedAsync(conn, id)).IsNull();
+  }
+
   // ===== Helpers =====
 
   private static async Task<NpgsqlConnection> _openAsync(DbContext ctx) {
