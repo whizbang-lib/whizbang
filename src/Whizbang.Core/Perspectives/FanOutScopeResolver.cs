@@ -90,6 +90,19 @@ public sealed class FanOutScopeResolver(IReadOnlyList<PerspectiveFanOutEntry> en
   internal static bool KeyHolds(object? key, object? streamId) =>
     Equals(key is IWhizbangId id ? id.ToGuid() : key, streamId);
 
+  /// <summary>
+  /// The stream a row's key value holds (#2621), compared as <see cref="KeyHolds"/> compares it: a strongly typed id by
+  /// its Guid, a <see cref="Guid"/> as itself. Null for a key that holds no stream: unset, <see cref="Guid.Empty"/>, or of
+  /// another type.
+  /// </summary>
+  /// <param name="key">The row's key value, boxed.</param>
+  /// <returns>The stream id, or null.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/FanOutReplayApplierTests.cs:FanOutKeyOf_IsTheStreamTheKeyHolds_AStronglyTypedIdByItsGuidAsync</tests>
+  internal static Guid? StreamOf(object? key) {
+    var stream = key is IWhizbangId id ? id.ToGuid() : key as Guid?;
+    return stream == Guid.Empty ? null : stream;
+  }
+
   private static FanOutScope _require(ICollectiveScope scope) =>
     scope as FanOutScope ?? throw new ArgumentException(
       $"FanOutScopeResolver handles only a FanOutScope (ScopeKind='{FanOutScope.KIND}'); got ScopeKind='{scope?.ScopeKind ?? "null"}'.",
