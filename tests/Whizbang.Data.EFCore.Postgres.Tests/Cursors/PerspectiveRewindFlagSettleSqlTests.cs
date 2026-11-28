@@ -122,6 +122,56 @@ public class PerspectiveRewindFlagSettleSqlTests : EFCoreTestBase {
       .Because("a flag whose straggler is still pending is the rewind the worker has yet to run");
   }
 
+  [Test]
+  public async Task CompletePerspective_RetiringTheLastRowSettlesTheFlag_ClearsItsTriggerAndTimesAsync() {
+    await using var conn = await _openAsync();
+    var stream = TrackedGuid.New();
+    var events = await _appendAsync(conn, stream, 2);
+    await _completeAsync([_completion(stream, events[1])], [], debugMode: false);
+    var stragglerWork = await _flagWithPendingStragglerAsync(conn, stream, PERSPECTIVE, events[0]);
+
+    await _completeAsync([], [stragglerWork], debugMode: false);
+
+    await Assert.That(await _statusAsync(conn, stream, PERSPECTIVE) & REWIND_REQUIRED).IsEqualTo(0);
+    await Assert.That(await _flagColumnsSetAsync(conn, stream, PERSPECTIVE)).IsEqualTo(0)
+      .Because("a settled flag names no trigger: a trigger left behind is merged into the next flag as if it were live, "
+        + "so that rewind starts from the old event, and its first-flagged time dates from the settled flag");
+  }
+
+  [Test]
+  public async Task CompletePerspective_ACursorCompletionWithNothingPending_ClearsTheTriggerAndTimesItSettlesAsync() {
+    await using var conn = await _openAsync();
+    var stream = TrackedGuid.New();
+    var events = await _appendAsync(conn, stream, 3);
+    await _completeAsync([_completion(stream, events[1])], [], debugMode: false);
+    var stragglerWork = await _flagWithPendingStragglerAsync(conn, stream, PERSPECTIVE, events[0]);
+    await _completeAsync([], [stragglerWork], debugMode: false);
+    // A flag raised again with no pending row behind it (the state a lost row leaves), settled by the next completion.
+    await _flagWithoutWorkAsync(conn, stream, PERSPECTIVE, events[0]);
+
+    await _completeAsync([_completion(stream, events[2])], [], debugMode: false);
+
+    await Assert.That(await _statusAsync(conn, stream, PERSPECTIVE) & REWIND_REQUIRED).IsEqualTo(0);
+    await Assert.That(await _flagColumnsSetAsync(conn, stream, PERSPECTIVE)).IsEqualTo(0)
+      .Because("the completion that clears the flag clears what the flag named with it");
+  }
+
+  [Test]
+  public async Task SettleStaleRewindFlags_ClearsTheTriggerAndTimesOfEveryFlagItSettlesAsync() {
+    await using var conn = await _openAsync();
+    var stream = TrackedGuid.New();
+    var events = await _appendAsync(conn, stream, 2);
+    await _completeAsync([_completion(stream, events[1])], [], debugMode: false);
+    await _flagWithoutWorkAsync(conn, stream, PERSPECTIVE, events[0]);
+
+    await using var settle = new NpgsqlCommand("SELECT wh_settle_stale_rewind_flags()", conn);
+    _ = await settle.ExecuteScalarAsync();
+
+    await Assert.That(await _statusAsync(conn, stream, PERSPECTIVE) & REWIND_REQUIRED).IsEqualTo(0);
+    await Assert.That(await _flagColumnsSetAsync(conn, stream, PERSPECTIVE)).IsEqualTo(0)
+      .Because("the sweep that settles a flag clears what the flag named with it");
+  }
+
   private static PerspectiveCursorCompletion _completion(Guid stream, Guid lastEventId) => new() {
     StreamId = stream,
     PerspectiveName = PERSPECTIVE,
@@ -150,6 +200,28 @@ public class PerspectiveRewindFlagSettleSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("e", straggler);
     await cmd.ExecuteNonQueryAsync();
     return work;
+  }
+
+  /// <summary>A flag with no pending work row behind it.</summary>
+  private static async Task _flagWithoutWorkAsync(NpgsqlConnection conn, Guid stream, string perspective, Guid trigger) {
+    await using var cmd = new NpgsqlCommand(
+      "UPDATE wh_perspective_cursors SET status = status | 32, rewind_trigger_event_id = @e, rewind_flagged_at = NOW(), "
+      + "rewind_first_flagged_at = COALESCE(rewind_first_flagged_at, NOW()) WHERE stream_id = @s AND perspective_name = @p", conn);
+    cmd.Parameters.AddWithValue("s", stream);
+    cmd.Parameters.AddWithValue("p", perspective);
+    cmd.Parameters.AddWithValue("e", trigger);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  /// <summary>How many of the flag's columns (trigger, flagged at, first flagged at) the cursor still holds.</summary>
+  private static async Task<int> _flagColumnsSetAsync(NpgsqlConnection conn, Guid stream, string perspective) {
+    await using var cmd = new NpgsqlCommand(
+      "SELECT (rewind_trigger_event_id IS NOT NULL)::int + (rewind_flagged_at IS NOT NULL)::int "
+      + "+ (rewind_first_flagged_at IS NOT NULL)::int FROM wh_perspective_cursors WHERE stream_id = @s AND perspective_name = @p",
+      conn);
+    cmd.Parameters.AddWithValue("s", stream);
+    cmd.Parameters.AddWithValue("p", perspective);
+    return Convert.ToInt32(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
   }
 
   private async Task<NpgsqlConnection> _openAsync() {
