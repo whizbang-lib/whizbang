@@ -79,6 +79,42 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
 
   [Test]
   [Timeout(30000)]
+  public async Task DrainMode_AFanOutsSinkRow_ThatCannotBeRead_IsFailed_NotCompletedAsUnhandledAsync(CancellationToken cancellationToken) {
+    // #2620: a fan-out's row is this service's work though no collective handler applies the type, so a row that
+    // cannot be read is failed toward the dead-letter bound, never completed as an unhandled collective (which drops it).
+    var streamId = Guid.CreateVersion7();
+    var sinkWork = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    coordinator.EnqueueStreamEvents([
+      _raw(streamId, Guid.CreateVersion7(), sinkWork, perspectiveName: CollectiveRouting.SINK_PERSPECTIVE_NAME)]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([]);
+
+    var (worker, harness, _) = _createWorker(
+      coordinator, eventStore, _registry(new DrainRunner()),
+      consumerRegistry: new CollectiveConsumerRegistry([]),
+      fanOutRegistry: new DrainFanOutRegistry([new PerspectiveFanOutEntry(
+        typeof(object), typeof(object), typeof(DrainDeepEvent), "Key", "key", static (_, _) => null!,
+        (System.Linq.Expressions.Expression<Func<object, object?>>)(row => row))]));
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+    await harness.FailureCapture.WaitForCountAsync(1, cancellationToken);
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    var (_, failure) = harness.FailureCapture.Items.Single();
+    await Assert.That(failure.MessageId).IsEqualTo(sinkWork);
+    await Assert.That(harness.CompletionCapture.EventWorkIds).DoesNotContain(sinkWork);
+  }
+
+  private sealed class DrainFanOutRegistry(IReadOnlyList<PerspectiveFanOutEntry> entries) : IPerspectiveFanOutRegistry {
+    public IReadOnlyList<PerspectiveFanOutEntry> Entries => entries;
+  }
+
+  [Test]
+  [Timeout(30000)]
   public async Task DrainMode_CollectiveRowOfAHandledTypeThisInstanceCannotResolve_IsLeftAloneAsync(CancellationToken cancellationToken) {
     // The registry lists the type, yet this instance cannot resolve it: completing the row would drop work a handler
     // applies, and failing it would count it toward the bound. It is left for an instance that can read it.

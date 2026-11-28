@@ -115,6 +115,8 @@ public sealed class StartupHostedServiceAuditTests {
     "UnknownConfigurationKeyStartupValidator", "RegistrationValidationStartup", "InertConcurrencyStartupReporter",
     // Reports items two assemblies both register, from what the registrations already hold (#2201).
     "RegistrationCollisionStartupValidator",
+    // Refuses a host that declares a perspective fan-out it could not apply, from its registrations alone (#2620).
+    "PerspectiveFanOutWiringValidator",
     // Logs at Debug which assemblies the host's service scope included and excluded, from the anchors (#2243).
     "ServiceAssemblyScopeStartupReporter",
     // Logs which provider each storage feature uses and why, from the registrations and configuration (#2502).

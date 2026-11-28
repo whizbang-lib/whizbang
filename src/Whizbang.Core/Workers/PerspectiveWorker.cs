@@ -411,6 +411,11 @@ public partial class PerspectiveWorker(
   // not once per batch cycle.
   private Dictionary<string, IReadOnlyList<string>>? _perspectivesPerEventType;
 
+  // #2620: the foreign event types this host's perspectives fan out (IPerspectiveFanOutRegistry), read once at startup.
+  // Their __collective__ rows are applied by the sink, as a collective's are, through ICollectiveDispatcher.
+  private HashSet<Type> _fanOutEventTypes = [];
+  private HashSet<string> _fanOutEventTypeNames = new(StringComparer.Ordinal);
+
 
   // Cursor position cache for drain mode — eliminates redundant GetPerspectiveCursorAsync DB calls
   // Shares the PerspectiveStreamAffinityOptions instance so the cursor cache + the affinity
@@ -1003,6 +1008,9 @@ public partial class PerspectiveWorker(
   /// </summary>
   private async Task<bool> _initializePerspectiveRegistryAsync() {
     await using var startupScope = _scopeFactory.CreateAsyncScope();
+    _fanOutEventTypes = [.. startupScope.ServiceProvider.GetPerspectiveFanOutEntries().Select(e => e.EventType)];
+    _fanOutEventTypeNames = new(
+      _fanOutEventTypes.Select(t => EventTypeMatchingHelper.NormalizeTypeName(TypeNameFormatter.Format(t))), StringComparer.Ordinal);
     var registry = startupScope.ServiceProvider.GetService<IPerspectiveRunnerRegistry>();
     if (registry == null) {
       LogPerspectiveRegistryNotAvailableAtStartup(_logger);
@@ -2230,7 +2238,9 @@ public partial class PerspectiveWorker(
       }
       typeMap ??= EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
       var resolvable = EventTypeMatchingHelper.TryResolveType(typeMap, row.EventType, out _);
+      // #2620: a fan-out's row is this service's work, so an unreadable one is failed like any other row.
       if (string.Equals(row.PerspectiveName, CollectiveRouting.SINK_PERSPECTIVE_NAME, StringComparison.Ordinal)
+          && !_fanOutEventTypeNames.Contains(EventTypeMatchingHelper.NormalizeTypeName(row.EventType))
           && !_collectiveHandledHere(row.EventType, resolvable, handledCollectiveTypes, ref handledCollective)) {
         (unhandled ??= []).Add(row);
         continue;
@@ -2649,6 +2659,10 @@ public partial class PerspectiveWorker(
         perspectiveNames.Add(CollectiveRouting.SINK_PERSPECTIVE_NAME);
       } else {
         perspectiveNames.UnionWith(_perspectivesFor(typeNameCache, payload));
+        // #2620: a fanned-out event feeds its own stream's perspectives and, through the sink, the rows it targets.
+        if (_fanOutEventTypes.Contains(payload.GetType())) {
+          perspectiveNames.Add(CollectiveRouting.SINK_PERSPECTIVE_NAME);
+        }
       }
     }
     return perspectiveNames;
@@ -2677,7 +2691,7 @@ public partial class PerspectiveWorker(
       // _processCollectiveSinkAsync reports its own cursor completion and never signals the lifecycle
       // coordinator, so registering tracking here would leave a dangling (or empty, instantly-firing)
       // gate entry. The sink owns its completion lifecycle.
-      if (envelope.Payload is ICollectiveEvent) {
+      if (envelope.Payload is ICollectiveEvent || _appliedOnlyByTheSink(envelope.Payload, typeNameCache)) {
         continue;
       }
 
@@ -2690,6 +2704,39 @@ public partial class PerspectiveWorker(
         lifecycleCoordinator.ExpectPerspectiveCompletions(envelope.MessageId.Value, expected);
       }
     }
+  }
+
+  /// <summary>
+  /// Whether only the sink applies this event here (#2620): a fan-out type no perspective of this service reads. Like a
+  /// collective's, its lifecycle is not tracked by the drain (the receive path already fired it, as for any received
+  /// event nothing here applies, ReceivedEventPostPerspectiveStages).
+  /// </summary>
+  private bool _appliedOnlyByTheSink(IEvent payload, Dictionary<Type, string> typeNameCache) =>
+    _fanOutEventTypes.Contains(payload.GetType()) && _perspectivesFor(typeNameCache, payload).Count == 0;
+
+  /// <summary>
+  /// The sink's form of a stored event (#2620): a collective as itself, a fan-out wrapped as a
+  /// <see cref="FanOutCollectiveEvent"/> of its stream and tenant, and null for an event the sink does not apply here.
+  /// A fan-out of an event with no tenant targets nothing, so it is null too.
+  /// </summary>
+  private MessageEnvelope<IEvent>? _asSinkEvent(MessageEnvelope<IEvent> envelope, Guid streamId) {
+    if (envelope.Payload is ICollectiveEvent) {
+      return envelope;
+    }
+    if (!_fanOutEventTypes.Contains(envelope.Payload.GetType())
+        || envelope.GetCurrentScope()?.Scope.TenantId is not { } tenantId) {
+      return null;
+    }
+    // A copy, so an envelope another path read (the drain hands its own perspectives the foreign event) keeps its payload.
+    return new MessageEnvelope<IEvent> {
+      MessageId = envelope.MessageId,
+      Payload = PerspectiveFanOutEntry.CollectiveEventFor(envelope.Payload, streamId, tenantId),
+      Hops = envelope.Hops,
+      DispatchContext = envelope.DispatchContext,
+      Flags = envelope.Flags,
+      LocalCommitSequence = envelope.LocalCommitSequence,
+      LocalStreamVersion = envelope.LocalStreamVersion,
+    };
   }
 
   /// <summary>
@@ -3948,7 +3995,10 @@ public partial class PerspectiveWorker(
     // on the collective event is processed. Without this, a UI waiting on a completion tag never learns the
     // set-based apply finished (the "Template Activating" toast hang). Only applied collectives get here, so we
     // never signal completion for an apply that did not happen.
-    await _fireCollectivePostApplyLifecycleAsync(scope, streamId, applied, changes, cancellationToken)
+    // #2620: a fan-out's lifecycle belongs to its own stream's perspectives (or to the receive path when none reads it
+    // here); only a collective's apply is its "all perspectives complete" moment.
+    await _fireCollectivePostApplyLifecycleAsync(
+      scope, streamId, [.. applied.Where(e => e.Payload is not FanOutCollectiveEvent)], changes, cancellationToken)
       .ConfigureAwait(false);
   }
 
@@ -3989,7 +4039,7 @@ public partial class PerspectiveWorker(
     var events = await eventStore.GetEventsBetweenPolymorphicAsync(
       streamId, lastProcessedEventId, Guid.Empty, typeProvider.GetEventTypes(), cancellationToken)
       .ConfigureAwait(false);
-    return new CollectiveSinkBatch([.. events.Where(e => e.Payload is ICollectiveEvent)], sinkWorkIds);
+    return new CollectiveSinkBatch([.. events.Select(e => _asSinkEvent(e, streamId)).OfType<MessageEnvelope<IEvent>>()], sinkWorkIds);
   }
 
   /// <summary>
@@ -4062,10 +4112,7 @@ public partial class PerspectiveWorker(
     }
 
     var raw = await workCoordinator.FetchEventsByIdsAsync([.. head.Select(e => e.EventId)], cancellationToken).ConfigureAwait(false);
-    var byId = new Dictionary<Guid, MessageEnvelope<IEvent>>();
-    foreach (var envelope in eventStore.DeserializeStreamEvents(raw, typeProvider.GetEventTypes()).Where(e => e.Payload is ICollectiveEvent)) {
-      byId.TryAdd(envelope.MessageId.Value, envelope);
-    }
+    var byId = _sinkEventsById(eventStore.DeserializeStreamEvents(raw, typeProvider.GetEventTypes()), streamId);
     var envelopes = new List<MessageEnvelope<IEvent>>(head.Count);
     var workIdByEventId = new Dictionary<Guid, Guid>(head.Count);
     foreach (var entry in head) {
@@ -4086,6 +4133,46 @@ public partial class PerspectiveWorker(
     }
     return new CollectiveSinkBatch(envelopes, completed, workIdByEventId, queuedEventIds);
   }
+
+  /// <summary>
+  /// The queued events the sink applies, by id, in their sink form (<see cref="_asSinkEvent"/>). A queued row for an event
+  /// this build neither applies as a collective nor fans out (#2619: a fan-out a newer release declares, met by an
+  /// instance that overrode its stand-down, or one since removed) is completed with the rest, as before, but never
+  /// silently: it is counted and named.
+  /// </summary>
+  private Dictionary<Guid, MessageEnvelope<IEvent>> _sinkEventsById(List<MessageEnvelope<IEvent>> events, Guid streamId) {
+    var byId = new Dictionary<Guid, MessageEnvelope<IEvent>>();
+    List<MessageEnvelope<IEvent>>? notHere = null;
+    foreach (var envelope in events) {
+      if (_asSinkEvent(envelope, streamId) is { } sinkEvent) {
+        byId.TryAdd(sinkEvent.MessageId.Value, sinkEvent);
+      } else if (!_fanOutEventTypes.Contains(envelope.Payload.GetType())) {
+        (notHere ??= []).Add(envelope);
+      }
+    }
+    if (notHere is not null) {
+      _reportSinkEventsNotAppliedHere(streamId, notHere);
+    }
+    return byId;
+  }
+
+  /// <summary>
+  /// Counts and names the queued sink events this build does not apply (#2619), once per event type per run, on
+  /// <c>whizbang.collectives.unhandled</c>.
+  /// </summary>
+  /// <docs>operations/workers/perspective-worker#fan-out-events</docs>
+  private void _reportSinkEventsNotAppliedHere(Guid streamId, List<MessageEnvelope<IEvent>> notHere) {
+    _compositeMetrics?.CollectivesUnhandled.Add(notHere.Count);
+    foreach (var byType in notHere.GroupBy(e => TypeNameFormatter.Format(e.Payload.GetType()), StringComparer.Ordinal)) {
+      LogSinkEventsNotAppliedHere(_logger, _instanceProvider.ServiceName, byType.Key, byType.Count(), streamId);
+    }
+  }
+
+  [LoggerMessage(EventId = 95, Level = LogLevel.Warning,
+    Message = "Service {ServiceName} neither applies {EventType} as a collective nor fans it out: completed {Count} queued "
+            + "__collective__ row(s) on stream {StreamId} without applying them. An instance of an older release that "
+            + "overrode its stand-down, or a fan-out removed since the rows were queued, leaves rows like these")]
+  static partial void LogSinkEventsNotAppliedHere(ILogger logger, string serviceName, string eventType, int count, Guid streamId);
 
   /// <summary>
   /// A sink stream's queue as one run sees it (#1524): its rows in apply order (the whole queue, or at least its head),

@@ -36,8 +36,12 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   // (or currency check) that is running; null when they cannot be known. The associations step writes them with the
   // gate marker, and its hash covers them, so a start whose handler set changed runs the step again.
   private static readonly global::System.Threading.AsyncLocal<global::System.Collections.Generic.IReadOnlyList<string>?> _collectiveEventTypes = new();
+  // #2619: the event types this host's perspectives fan out, read from its fan-out registry for the same pass. The step
+  // writes each as a perspective association to the collective sink, and the hash covers them.
+  private static readonly global::System.Threading.AsyncLocal<global::System.Collections.Generic.IReadOnlyList<string>?> _fanOutEventTypes = new();
   private static string _associationsHash =>
-    global::Whizbang.Core.Perspectives.CollectiveRoutingAssociations.AssociationsHash(_perspectiveAssociationsHash, _collectiveEventTypes.Value);
+    global::Whizbang.Core.Perspectives.CollectiveRoutingAssociations.AssociationsHash(
+      _perspectiveAssociationsHash, _collectiveEventTypes.Value, _fanOutEventTypes.Value);
   private const string _associationsHashKey = "associations:__DBCONTEXT_CLASS__";
   /// <summary>
   /// Ensures Whizbang database schema is fully initialized for __DBCONTEXT_CLASS__.
@@ -115,6 +119,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     using var storedFormApplier = Whizbang.Data.Postgres.StoredFormApplier.ScopeTo(new Whizbang.Data.Postgres.StoredFormApplier(
       "__LIBRARY_VERSION__", _ledgerApplicationVersion.Value ?? Whizbang.Data.Postgres.SchemaLedgerVersion.UNKNOWN));
     _collectiveEventTypes.Value = Whizbang.Data.EFCore.Postgres.SchemaCollectiveHandlers.Resolve(dbContext, serviceProvider);
+    _fanOutEventTypes.Value = Whizbang.Data.EFCore.Postgres.SchemaCollectiveHandlers.ResolveFanOutEventTypes(dbContext, serviceProvider);
     var sw = global::System.Diagnostics.Stopwatch.StartNew();
     var migrationsApplied = 0;
     // #2596: whether this start's own pass applied anything, so the Converge stage runs its shared work again.
@@ -958,6 +963,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   public static async Task<bool> IsWhizbangSchemaCurrentAsync(
       this __DBCONTEXT_FQN__ dbContext, CancellationToken cancellationToken = default, IServiceProvider? serviceProvider = null) {
     _collectiveEventTypes.Value = Whizbang.Data.EFCore.Postgres.SchemaCollectiveHandlers.Resolve(dbContext, serviceProvider);
+    _fanOutEventTypes.Value = Whizbang.Data.EFCore.Postgres.SchemaCollectiveHandlers.ResolveFanOutEventTypes(dbContext, serviceProvider);
     await using var connectionScope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
       (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection(), cancellationToken);
     var connection = connectionScope.Connection;
@@ -1008,7 +1014,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     }
     // The hash the associations step records, over this host's collective handlers, without setting the pass's own.
     var associations = global::Whizbang.Core.Perspectives.CollectiveRoutingAssociations.AssociationsHash(
-      _perspectiveAssociationsHash, Whizbang.Data.EFCore.Postgres.SchemaCollectiveHandlers.Resolve(dbContext, serviceProvider));
+      _perspectiveAssociationsHash, Whizbang.Data.EFCore.Postgres.SchemaCollectiveHandlers.Resolve(dbContext, serviceProvider),
+      Whizbang.Data.EFCore.Postgres.SchemaCollectiveHandlers.ResolveFanOutEventTypes(dbContext, serviceProvider));
     if (associations.Length > 0) {
       content[_associationsHashKey] = associations;
     }

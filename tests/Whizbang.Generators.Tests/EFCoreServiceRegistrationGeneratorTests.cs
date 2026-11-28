@@ -2484,8 +2484,10 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
     var schemaExtensions = result.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions")).SourceText.ToString();
     var registration = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
 
-    await Assert.That(schemaExtensions).Contains("logger, cancellationToken, _collectiveEventTypes.Value);")
-      .Because("the step passes the handled set the pass resolved, the set its hash was computed over");
+    await Assert.That(schemaExtensions).Contains("logger, cancellationToken, _collectiveEventTypes.Value, _fanOutEventTypes.Value);")
+      .Because("the step passes the handled set and the fan-out set (#2619) the pass resolved, the sets its hash was computed over");
+    await Assert.That(schemaExtensions).Contains("SchemaCollectiveHandlers.ResolveFanOutEventTypes(dbContext, serviceProvider)")
+      .Because("the fan-out set is read from the host's fan-out registry for the pass and for the currency check");
     await Assert.That(registration).Contains("IsWhizbangSchemaCurrentAsync(ct, scope.ServiceProvider)")
       .Because("the currency check must hash the same handled set the pass would write");
   }

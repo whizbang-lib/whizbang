@@ -42,26 +42,63 @@ public static class CollectiveRoutingAssociations {
   public const string GATE_ASSOCIATION_TYPE = "collective_gate";
 
   /// <summary>
-  /// The JSON objects to append to the perspective associations array: each preceded by a comma, one
-  /// <see cref="ASSOCIATION_TYPE"/> entry per handled type and then the <see cref="GATE_ASSOCIATION_TYPE"/> marker.
-  /// Empty when <paramref name="handledEventTypes"/> is <see langword="null"/>.
+  /// The association type of a fan-out type's route to the sink (#2619): an ordinary perspective association whose
+  /// target is <see cref="CollectiveRouting.SINK_PERSPECTIVE_NAME"/>, so the store's existing perspective insert creates
+  /// the event's sink row and an ordinary event pays nothing.
   /// </summary>
+  public const string FAN_OUT_ASSOCIATION_TYPE = "perspective";
+
+  /// <summary>The collective entries alone, for a host that declares no fan-out: <see cref="AssociationEntriesJson(IReadOnlyList{string}, string, IReadOnlyList{string})"/> with none.</summary>
   /// <param name="handledEventTypes">The handled collective event types, or null when they cannot be known.</param>
   /// <param name="serviceName">The service the rows belong to, as the perspective associations name it.</param>
   /// <returns>The entries, ready to follow at least one entry already in the array.</returns>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Entries_WithNoFanOut_AreExactlyWhatTheyWereAsync</tests>
+  public static string AssociationEntriesJson(IReadOnlyList<string>? handledEventTypes, string serviceName) =>
+    AssociationEntriesJson(handledEventTypes, serviceName, null);
+
+  /// <summary>
+  /// The JSON objects to append to the perspective associations array: each preceded by a comma, one
+  /// <see cref="ASSOCIATION_TYPE"/> entry per handled type and then the <see cref="GATE_ASSOCIATION_TYPE"/> marker
+  /// (none of them when <paramref name="handledEventTypes"/> is <see langword="null"/>), then one
+  /// <see cref="FAN_OUT_ASSOCIATION_TYPE"/> entry per fan-out type with the sink's no-rewind-floor marker.
+  /// </summary>
+  /// <param name="handledEventTypes">The handled collective event types, or null when they cannot be known.</param>
+  /// <param name="serviceName">The service the rows belong to, as the perspective associations name it.</param>
+  /// <param name="fanOutEventTypes">The event types this service's perspectives fan out (#2619), each written once
+  /// whatever <paramref name="handledEventTypes"/> is; null or empty writes none.</param>
+  /// <returns>The entries, ready to follow at least one entry already in the array.</returns>
+  /// <docs>fundamentals/messaging/collective-events#fan-out-rows</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Entries_ForAFanOutType_AreAPerspectiveAssociationToTheSink_AndTheSinksNoFloorMarkerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Entries_ForFanOutTypes_AreWrittenEvenWhenTheHandledSetIsUnknownAsync</tests>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Entries_ForAKnownSet_AreOneCollectiveAssociationPerType_AndTheGateMarkerAsync</tests>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Entries_ForAnUnknownSet_AreNothing_SoTheStoreKeepsCreatingEveryRowAsync</tests>
-  public static string AssociationEntriesJson(IReadOnlyList<string>? handledEventTypes, string serviceName) {
-    if (handledEventTypes is null) {
-      return string.Empty;
-    }
+  public static string AssociationEntriesJson(
+      IReadOnlyList<string>? handledEventTypes, string serviceName, IReadOnlyList<string>? fanOutEventTypes) {
     var json = new StringBuilder();
-    foreach (var type in _canonical(handledEventTypes)) {
-      _appendEntry(json, type, ASSOCIATION_TYPE, serviceName);
+    if (handledEventTypes is not null) {
+      foreach (var type in _canonical(handledEventTypes)) {
+        _appendEntry(json, type, ASSOCIATION_TYPE, serviceName);
+      }
+      _appendEntry(json, CollectiveRouting.SINK_PERSPECTIVE_NAME, GATE_ASSOCIATION_TYPE, serviceName);
     }
-    _appendEntry(json, CollectiveRouting.SINK_PERSPECTIVE_NAME, GATE_ASSOCIATION_TYPE, serviceName);
+    if (fanOutEventTypes is { Count: > 0 }) {
+      // #2619: the store's perspective association insert routes each fan-out type to the sink, as it routes any type to
+      // a perspective, so no emit chain gains a branch. The sink takes no snapshot, so it keeps no rewind floor.
+      foreach (var type in _canonical(fanOutEventTypes)) {
+        _appendEntry(json, type, FAN_OUT_ASSOCIATION_TYPE, serviceName);
+      }
+      json.Append(EphemeralRewindFloor.NoFloorAssociationEntryJson(CollectiveRouting.SINK_PERSPECTIVE_NAME, serviceName));
+    }
     return json.ToString();
   }
+
+  /// <summary>The hash over the collective set alone, for a host that declares no fan-out: <see cref="AssociationsHash(string, IReadOnlyList{string}, IReadOnlyList{string})"/> with none.</summary>
+  /// <param name="perspectiveAssociationsHash">The generated hash of the perspective associations.</param>
+  /// <param name="handledEventTypes">The handled collective event types, or null when they cannot be known.</param>
+  /// <returns>The hash the step records and compares.</returns>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Hash_ChangesWhenTheHandledSetChanges_AndOnlyThenAsync</tests>
+  public static string AssociationsHash(string perspectiveAssociationsHash, IReadOnlyList<string>? handledEventTypes) =>
+    AssociationsHash(perspectiveAssociationsHash, handledEventTypes, null);
 
   /// <summary>
   /// The associations step's hash: a SHA-256 over the perspective associations' compile-time hash and the handled
@@ -70,11 +107,16 @@ public static class CollectiveRoutingAssociations {
   /// </summary>
   /// <param name="perspectiveAssociationsHash">The generated hash of the perspective associations.</param>
   /// <param name="handledEventTypes">The handled collective event types, or null when they cannot be known.</param>
+  /// <param name="fanOutEventTypes">The fan-out event types (#2619). Covered only when there is one, so a host without
+  /// a fan-out records the hash it always did; adding or removing one changes the hash, which the migration ledger
+  /// records, so the release that first carries it runs the standby handshake.</param>
   /// <returns>The hash the step records and compares.</returns>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Hash_ChangesWhenAFanOutIsAddedOrRemoved_AndOnlyThenAsync</tests>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Hash_ChangesWhenTheHandledSetChanges_AndOnlyThenAsync</tests>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Hash_TellsUnknownFromEmpty_AndFromThePerspectiveSetAloneAsync</tests>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Hash_ForAContextWithNoPerspectives_StaysEmpty_SoItHasNoAssociationsStepAsync</tests>
-  public static string AssociationsHash(string perspectiveAssociationsHash, IReadOnlyList<string>? handledEventTypes) {
+  public static string AssociationsHash(
+      string perspectiveAssociationsHash, IReadOnlyList<string>? handledEventTypes, IReadOnlyList<string>? fanOutEventTypes) {
     ArgumentNullException.ThrowIfNull(perspectiveAssociationsHash);
     if (perspectiveAssociationsHash.Length == 0) {
       return string.Empty;
@@ -82,7 +124,9 @@ public static class CollectiveRoutingAssociations {
     // One SHA-256, the width of every hash the migration ledger records (content_hash is VARCHAR(64)). "unknown" cannot
     // be a type name, so an unknown set never hashes like a known one.
     var collective = handledEventTypes is null ? "unknown" : "known\n" + string.Join('\n', _canonical(handledEventTypes));
-    var digest = SHA256.HashData(Encoding.UTF8.GetBytes(perspectiveAssociationsHash + "\ncollective:" + collective));
+    // #2619: the fan-out set only when there is one, so a host without a fan-out keeps the hash it already recorded.
+    var fanOut = fanOutEventTypes is { Count: > 0 } ? "\nfan-out:" + string.Join('\n', _canonical(fanOutEventTypes)) : string.Empty;
+    var digest = SHA256.HashData(Encoding.UTF8.GetBytes(perspectiveAssociationsHash + "\ncollective:" + collective + fanOut));
     return Convert.ToHexStringLower(digest);
   }
 

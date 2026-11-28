@@ -53,7 +53,7 @@ public partial class PerspectiveWorker {
     // _perspectivesPerEventType, select the collective events directly. _processCollectiveSinkAsync
     // reloads them from the event store, but the list must be non-empty to clear the empty-skip gate.
     perspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME
-      ? StreamOrder.InStreamOrder(events.Where(e => e.Payload is ICollectiveEvent))
+      ? StreamOrder.InStreamOrder(events.Where(e => e.Payload is ICollectiveEvent || _fanOutEventTypes.Contains(e.Payload.GetType())))
       : StreamOrder.InStreamOrder(events.Where(e => _perspectivesFor(context.TypeNameCache, e.Payload).Contains(perspectiveName)));
 
   /// <summary>One lap of a stream's drain, per pair: each perspective of the lap's events under its own affinity gate.</summary>

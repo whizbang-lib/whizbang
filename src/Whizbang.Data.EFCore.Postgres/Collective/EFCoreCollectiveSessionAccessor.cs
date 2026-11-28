@@ -26,3 +26,20 @@ public sealed class EFCoreCollectiveSessionAccessor<TDbContext> : ICollectiveSes
     return scopedServiceProvider.GetRequiredService<TDbContext>();
   }
 }
+
+/// <summary>
+/// The collective session of a context known by its type (#2620): what the EF Core Postgres driver registers for a host
+/// that declares a perspective fan-out, where the context's type is a value.
+/// </summary>
+/// <param name="dbContextType">The <see cref="DbContext"/> type the applies run on.</param>
+/// <docs>fundamentals/perspectives/multi-stream#how-a-fan-out-applies-live</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/EFCoreCollectiveDiUnitTests.cs:SessionAccessor_ForAContextType_ReturnsTheRegisteredDbContextAsync</tests>
+public sealed class EFCoreCollectiveSessionAccessor(Type dbContextType) : ICollectiveSessionAccessor {
+  private readonly Type _dbContextType = dbContextType ?? throw new ArgumentNullException(nameof(dbContextType));
+
+  /// <inheritdoc />
+  public object GetSession(IServiceProvider scopedServiceProvider) {
+    ArgumentNullException.ThrowIfNull(scopedServiceProvider);
+    return scopedServiceProvider.GetRequiredService(_dbContextType);
+  }
+}
