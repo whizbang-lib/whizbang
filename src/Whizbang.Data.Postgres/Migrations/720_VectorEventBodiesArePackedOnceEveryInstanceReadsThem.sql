@@ -48,7 +48,7 @@
 --
 -- Reversal: reversible (the down file restores each write path's last word; packed bodies and the journal row stay,
 --           and the journal row keeps standing down a library that cannot read them)
--- Dependencies: 573 (_emit_event_store_chain), 574 (_emit_event_store_chain_for_inbox), 537 (wh_append_event,
+-- Dependencies: 662 (_emit_event_store_chain, _emit_event_store_chain_for_inbox, wh_append_event), 537 (
 --               _wh_metadata_trim_on), 316 (wh_live_instance_ids), 176 and 385 (wh_stored_form_migrations)
 -- Objects: wh_event_vector_paths, wh_packed_vector_paths, wh_packed_vector_paths_unread, _wh_pack_vector, _wh_pack_vectors, wh_register_event_vector_paths,
 --          _wh_vector_packing_on, wh_open_vector_packing_gate, _emit_event_store_chain, _emit_event_store_chain_for_inbox,
@@ -325,7 +325,7 @@ COMMENT ON FUNCTION __SCHEMA__.wh_packed_vector_paths_unread(TEXT[], JSONB) IS
 -- The write paths
 -- ===========================================================================================
 
--- ── _emit_event_store_chain: last word 573, copied whole, its stored body packed under the gate (720) ──
+-- ── _emit_event_store_chain: last word 662, copied whole, its stored body packed under the gate (720) ──
 SELECT __SCHEMA__.drop_all_overloads('_emit_event_store_chain');
 -- <docs>data/event-store#packed-vectors</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorStorageSqlTests.cs:WritePath_StoresJsonNumbersWhileTheGateIsClosed_AndPackedVectorsOnceItIsOpenAsync</tests>
@@ -648,7 +648,7 @@ BEGIN
       'fold', p_now, TRUE) AS folded
     FROM computed c
     JOIN stored_events se ON se.event_id = c.message_id
-    WHERE __DIGEST_ELIGIBLE__(c)
+    WHERE __DIGEST_ELIGIBLE_V2__(c)
       AND (c.supersede_key IS NULL
            OR (NOT EXISTS (
                  SELECT 1 FROM __SCHEMA__.wh_event_store o
@@ -845,10 +845,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain(UUID[], UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-  'Copies committed outbox events into the event store and creates their perspective work (146). 149: the perspective rows inherit the outbox row''s priority. 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 260: keeps each stored stream''s wh_stream_lifecycle row, one upsert per batch (#1732). 266: dead-letters each event a sealed stream refuses and stores the rest; a terminal event seals its stream in the same statement (#1733). 271: and each event an archived stream refuses, by its type''s AppendToArchived policy, queuing the stream''s restore under AutoRestore (#1738). 285: each row keeps the slim form unless kept full, carries its route id, and under the Linked form stages its full form (#1725). 295: stamps a superseding event''s key (wh_event_store.supersede_key) and queues the older events of its key for the reaper (#1729). 296: starts the new generation of an archived stream whose type declares NewGeneration, numbered on from its last version (#1734). 352: and its superseding group (wh_event_store.supersede_group, #2124), so the older events of its group, not only its type, are queued. 391: a collective event of a type no handler on this service applies gets no __collective__ row once every service registered in the schema has written its collective_gate marker (_wh_collective_row_wanted, #2145). 537 (#2323): the slim row leaves out its message id when it is the event id, and its hop scope when it is the scope column alone. 567 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own). 573 (#2551): a stream''s events are numbered in the order the id array lists them, the order they were emitted, never by id. 720 (#2625): once the packing gate is open, the stored body of a type with registered vector paths holds them packed binary32 (_wh_pack_vectors); the wire form is unchanged.';
-
--- ── _emit_event_store_chain_for_inbox: last word 574, copied whole, its stored body packed under the gate (720) ──
+-- ── _emit_event_store_chain_for_inbox: last word 662, copied whole, its stored body packed under the gate (720) ──
 SELECT __SCHEMA__.drop_all_overloads('_emit_event_store_chain_for_inbox');
 -- <docs>data/event-store#packed-vectors</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorStorageSqlTests.cs:WritePath_StoresJsonNumbersWhileTheGateIsClosed_AndPackedVectorsOnceItIsOpenAsync</tests>
@@ -1404,7 +1401,7 @@ BEGIN
       'fold', p_now, TRUE) AS folded
     FROM computed c
     JOIN stored_events se ON se.event_id = c.message_id
-    WHERE __DIGEST_ELIGIBLE__(c)
+    WHERE __DIGEST_ELIGIBLE_V2__(c)
       AND (c.supersede_key IS NULL
            OR (NOT EXISTS (
                  SELECT 1 FROM __SCHEMA__.wh_event_store o
@@ -1718,10 +1715,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-  '551 (#1630): a row this pass held back shows it waits for its stream''s head (failure_reason 30, AwaitingStreamHead, and an error naming the stream and when the wait began), replacing only a lapsed-lease record, and the stamp clears it once the row is stored. 411 (#2120): a row the calling claim leased (lease_expiry = p_lease_expiry) that this pass held back is refunded the attempt the claim counted. Copies leased inbox events into the event store, stamps their origin and creates their perspective work (162). 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 228: an event that would make its stream hold both ephemeral and Sourced events is dead-lettered instead (WHIZ133, #1546). 230: a row waits behind an earlier pending row of its stream that this pass does not hold, so a received stream is stored in the producer''s order (#1607). 260: keeps each stored stream''s wh_stream_lifecycle row, one upsert per batch (#1732). 266: dead-letters each received event a sealed stream refuses and stores the rest; a terminal event seals its stream in the same statement (#1733). 271: and each received event an archived stream refuses, by its type''s AppendToArchived policy, queuing the stream''s restore under AutoRestore (#1738). 285: each row keeps the slim form unless kept full, carries its route id, and under the Linked form stages its full form (#1725). 295: stamps a superseding event''s key (wh_event_store.supersede_key) and queues the older events of its key for the reaper (#1729). 296: starts the new generation of an archived stream whose type declares NewGeneration, numbered on from its last version (#1734). 352: and its superseding group (wh_event_store.supersede_group, #2124), so the older events of its group, not only its type, are queued. 367: a pass whose lock pass finds no candidate only stamps, and the collective routing runs only when a stored event is collective. 391: a collective event of a type no handler on this service applies gets no __collective__ row once every service registered in the schema has written its collective_gate marker (_wh_collective_row_wanted, #2145). 537 (#2323): the slim row leaves out its message id when it is the event id, and its hop scope when it is the scope column alone. 567 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own). 574 (#2551): versions a received stream in receive order (each origin by its origin position, dealt into its arrival slots; the id only for an event with no origin position, as the replay places it), holds a batch back behind an unheld head by that order, and declares a straggler by the origin''s order, never by id. 720 (#2625): once the packing gate is open, the stored body of a type with registered vector paths holds them packed binary32 (_wh_pack_vectors); the wire form is unchanged.';
-
--- ── wh_append_event: last word 537, copied whole, its stored body packed under the gate (720) ──
+-- ── wh_append_event: last word 662, copied whole, its stored body packed under the gate (720) ──
 SELECT __SCHEMA__.drop_all_overloads('wh_append_event');
 -- <docs>data/event-store#packed-vectors</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorStorageSqlTests.cs:WritePath_StoresJsonNumbersWhileTheGateIsClosed_AndPackedVectorsOnceItIsOpenAsync</tests>
@@ -1928,7 +1922,7 @@ BEGIN
   -- 225 (#1600): fold the event into its stream digest bucket, as the emit chain's digest_folds does, still under
   -- the stream lock taken above. One event, so one row: the chain's bit_xor and COUNT(*) over a single event are
   -- its two hashes and 1.
-  IF EXISTS (SELECT 1 FROM (SELECT v_flags AS flags, p_event_type AS event_type) ev WHERE __DIGEST_ELIGIBLE__(ev)) THEN
+  IF EXISTS (SELECT 1 FROM (SELECT v_flags AS flags, p_event_type AS event_type) ev WHERE __DIGEST_ELIGIBLE_V2__(ev)) THEN
     PERFORM __SCHEMA__._wh_fold_stream_digests(
       ARRAY[__EMPTY_UUID__::uuid], ARRAY[COALESCE(p_scope ->> 't', '')], ARRAY[p_event_type], ARRAY[p_stream_id],
       ARRAY[p_event_id], 'fold', p_created_at);
@@ -1969,6 +1963,3 @@ BEGIN
   RETURN v_version;
 END;
 $$ LANGUAGE plpgsql;
-
-COMMENT ON FUNCTION __SCHEMA__.wh_append_event(UUID, UUID, UUID, TEXT, TEXT, JSONB, JSONB, JSONB, TIMESTAMPTZ, INTEGER) IS
-'Appends one event to a stream for IEventStore.AppendAsync (both drivers) and returns the version it assigned. Takes the per-stream advisory lock the emit chains take (hashtext(''wh_event_store:'' || stream_id)), then inserts at COALESCE(MAX(version), 0) + 1 in a separate statement so the read sees every append committed during the wait (224, #1555). 225: folds the stored event into wh_stream_digests as the emit chain does, unless it is ephemeral, at-most-once or of a digest-exempt type (#1600). 228: stores the event''s kind bits (p_flags) and refuses, raising SQLSTATE WH133, an event that would make its stream hold both ephemeral and Sourced events (WHIZ133, #1546). 260: keeps the stream''s wh_stream_lifecycle row (#1732). 266: refuses an append to a sealed stream, raising SQLSTATE WHS01 (StreamSealedException), and a terminal event seals its stream (#1733). 267: a new stream starts at version 1, as on the outbox and inbox paths; an existing stream continues from its highest version (#1913). 271: refuses an append to an archived stream, raising SQLSTATE WHA01 (Refuse) or WHA02 (AutoRestore) by its type''s AppendToArchived policy (StreamArchivedException, #1738). 285: the row keeps the slim form unless kept full, carries its route id, and under the Linked form the metadata as written is staged (#1725). 295: stamps a superseding event''s key and queues the older events of its key for the reaper (#1729). 296: starts the new generation of an archived stream whose type declares NewGeneration, numbered on from its last version (#1734). 352: stamps the superseding group beside the key (#2124). 537: the slim row leaves out its message id when it is the event id, and its hop scope when it is the scope column alone (#2323). 720 (#2625): once the packing gate is open, the stored body of a type with registered vector paths holds them packed binary32 (_wh_pack_vectors); the wire form is unchanged.';
