@@ -18,7 +18,12 @@
 --              bytes as numbers against 12,960 packed for 4-decimal vectors; 26,613 against 16,476 at full
 --              precision), so a vector that was rounded before it was written stays JSON numbers. A body kept is
 --              counted as blocked on the walk, which moves past it and completes; it is read again only when the walk
---              restarts. The paths are recorded in wh_packed_vector_paths only by a batch that packed a body, in the
+--              restarts. The copy is made per batch (a pooled connection's reset drops it): at most the step's batch
+--              limit a maintenance cycle, never once a type's walk is complete or while the gate is closed, which is why
+--              PerCallFunctionsCreateNoTemporaryTableTests exempts this function. PostgreSQL has no SQL-level lz4, so
+--              only a stored row tells the compressed size; writing the packed body and reverting it would instead
+--              cost two full-body WAL writes for each body kept.
+--              The paths are recorded in wh_packed_vector_paths only by a batch that packed a body, in the
 --              same transaction. A batch packs nothing while the gate is closed. The write paths are unchanged: they
 --              pack every vector body once the gate is open. No event id, version or stream changes, and the
 --              integrity digests fold ids, never bodies.
