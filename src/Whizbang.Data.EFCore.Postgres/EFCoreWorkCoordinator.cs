@@ -3926,7 +3926,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       "c.source, c.work_id, c.work_stream_id, c.partition_number, c.destination, c.message_type, c.envelope_type, "
       + "c.message_data, c.metadata, c.status, c.attempts, c.is_newly_stored, c.is_orphaned, c.perspective_name, c.priority, "
       + "c.received_at",
-      $"{functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after, @p_outbox_rows, @p_outbox_run, @p_assignment_epoch, @p_assignment_revision, @p_alive_lock_held, @p_lifecycle_phase, @p_acquire_inbox)",
+      $"{functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after, @p_outbox_rows, @p_outbox_run, @p_assignment_epoch, @p_assignment_revision, @p_alive_lock_held, @p_lifecycle_phase, @p_acquire_inbox, @p_derivation_scheme)",
       "@p_id", "@p_part");
     if (request.IncludeOutstanding) {
       // #635: the outstanding-budget counts ride the claim's round trip as a second result set,
@@ -3979,6 +3979,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     });
     // 390 (#1853): no new inbox rows while the caller's inbox working set is at its byte budget.
     cmd.Parameters.Add(new NpgsqlParameter("p_acquire_inbox", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = request.AcquireInbox });
+    // 740 (#2633): this build's derivation scheme, stamped on an inbox row's first claim.
+    cmd.Parameters.Add(new NpgsqlParameter("p_derivation_scheme", NpgsqlTypes.NpgsqlDbType.Smallint) {
+      Value = Whizbang.Data.Postgres.InboxDerivationSchemeSql.CurrentScheme,
+    });
 
     var rows = new List<WorkBatchRow>();
     OutstandingWork? outstanding = null;
@@ -6695,8 +6699,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    // 576 (#2551): the fetch that ranks each stream in stream order and returns the rank.
-    var functionName = BuildSchemaQualifiedName(schema, "fetch_inbox_batch_in_stream_order");
+    // 576 (#2551): the fetch that ranks each stream in stream order and returns the rank; 740 (#2633): and the
+    // derivation scheme each row's first claim recorded.
+    var functionName = BuildSchemaQualifiedName(schema, Whizbang.Data.Postgres.InboxDerivationSchemeSql.FETCH_FUNCTION);
 
     var streamArr = AsArray(streamIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -6724,6 +6729,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var priorityOrdinal = _ordinalOrAbsent(reader, "priority");
     // 576 (#2551): the row's position in its stream.
     var streamPositionOrdinal = reader.GetOrdinal("stream_position");
+    // 740 (#2633): the derivation scheme the row first ran under.
+    var derivationSchemeOrdinal = reader.GetOrdinal("derivation_scheme");
     while (await reader.ReadAsync(cancellationToken)) {
       results.Add(new InboxBatchRow {
         MessageId = reader.GetGuid(0),
@@ -6742,6 +6749,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           : null,
         Priority = priorityOrdinal >= 0 ? reader.GetInt32(priorityOrdinal) : 0,
         StreamPosition = reader.GetInt64(streamPositionOrdinal),
+        DerivationScheme = Whizbang.Data.Postgres.InboxDerivationSchemeSql.FromStored(reader.GetInt16(derivationSchemeOrdinal)),
       });
     }
     // #2556: each fetched message is recorded under its stream's claimed tenure, which its result then names.

@@ -399,7 +399,10 @@ public abstract partial class Dispatcher(
       if (!await _admitRuntimeReceptorAsync(receptor, message, envelope, scope.ServiceProvider, CancellationToken.None).ConfigureAwait(false)) {
         return null;
       }
-      return await receptor.InvokeAsync(scope.ServiceProvider, message, envelope, receptor.CallerInfo, CancellationToken.None).ConfigureAwait(false);
+      // The body runs in a handling of its own when an outer handling is active, as a generated receptor's does (#2633)
+      using (EnterLocalReceptorHandling(receptor.ReceptorId)) {
+        return await receptor.InvokeAsync(scope.ServiceProvider, message, envelope, receptor.CallerInfo, CancellationToken.None).ConfigureAwait(false);
+      }
     };
   }
 
@@ -6695,6 +6698,21 @@ public abstract partial class Dispatcher(
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
+
+  /// <summary>
+  /// Enters the handling a receptor's body runs in when generated local dispatch reaches it (#2633): every generated
+  /// local receptor invocation (send, void, sync, void sync, any, the local runner and publish) wraps the body in it,
+  /// naming the receptor by its registry id, so no hand-written path has to remember to. Inside an active handling the
+  /// receptor runs in a handling of its own (its id, this service), anchored on the outer handling's next local
+  /// invocation, and derives, sends and emits under its own identity and counters. At top level it enters nothing and
+  /// allocates nothing.
+  /// </summary>
+  /// <param name="receptorId">The receptor's registry id, the id the receptor invoker names it by.</param>
+  /// <returns>The scope to dispose when the body returns.</returns>
+  /// <docs>fundamentals/identity/whizbang-ids#a-receptor-invoked-locally</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/LocalInvokeDeriveFromTests.cs</tests>
+  protected LocalReceptorHandlingScope EnterLocalReceptorHandling(string receptorId) =>
+    ReceptorHandling.EnterLocalInvocation(_instanceProvider.ServiceName, receptorId);
 
   /// <summary>
   /// Implemented by generated code - returns a strongly-typed delegate for invoking a receptor.

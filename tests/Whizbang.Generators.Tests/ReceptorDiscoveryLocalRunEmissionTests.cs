@@ -41,8 +41,8 @@ public class ReceptorDiscoveryLocalRunEmissionTests {
 
     var dispatcher = await _generatedDispatcherAsync(source);
 
-    await Assert.That(dispatcher).Contains("var result = await r.HandleAsync(typedEvt);")
-      .Because("the typed publisher runs the receptor and keeps its result");
+    await Assert.That(dispatcher).Contains("result = await r.HandleAsync(typedEvt);")
+      .Because("the typed publisher runs the receptor, in its local handling (#2633), and keeps its result");
     await Assert.That(dispatcher).Contains("await CascadeLocalResultAsync(result, typedEvt, typeof(global::MyApp.PlaceOrder), null, default);")
       .Because("the typed publisher cascades the result: #1410 dropped it");
     await Assert.That(dispatcher).Contains("await CascadeLocalResultAsync(result, typedEvt, typeof(global::MyApp.PlaceOrder), sourceEnvelope, cancellationToken);")
@@ -75,7 +75,7 @@ public class ReceptorDiscoveryLocalRunEmissionTests {
 
     await Assert.That(dispatcher).Contains("GetKeyedService<global::Whizbang.Core.ISyncReceptor<global::MyApp.Pinged, global::MyApp.Ponged>>(\"global::MyApp.PingedReceptor\")")
       .Because("a sync receptor that returns a result runs in the local run");
-    await Assert.That(dispatcher).Contains("var result = r.Handle(typedEvt);");
+    await Assert.That(dispatcher).Contains("result = r.Handle(typedEvt);");
     await Assert.That(dispatcher).Contains("await CascadeLocalResultAsync(result, typedEvt, typeof(global::MyApp.Pinged), null, default);")
       .Because("a sync receptor's result cascades as an async receptor's does");
     await Assert.That(dispatcher).Contains("GetKeyedService<global::Whizbang.Core.ISyncReceptor<global::MyApp.Noted>>(\"global::MyApp.NotedReceptor\")")

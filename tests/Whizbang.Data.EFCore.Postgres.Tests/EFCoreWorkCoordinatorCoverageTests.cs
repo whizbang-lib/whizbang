@@ -191,8 +191,8 @@ public class EFCoreWorkCoordinatorCoverageTests : EFCoreTestBase {
 
     await using (var replace = conn.CreateCommand()) {
       replace.CommandText = """
-        DROP FUNCTION IF EXISTS fetch_inbox_batch_in_stream_order(uuid[], uuid, integer, bigint);
-        CREATE FUNCTION fetch_inbox_batch_in_stream_order(
+        DROP FUNCTION IF EXISTS fetch_inbox_batch_with_derivation_scheme(uuid[], uuid, integer, bigint);
+        CREATE FUNCTION fetch_inbox_batch_with_derivation_scheme(
           p_stream_ids UUID[],
           p_instance_id UUID,
           p_max_per_stream INTEGER DEFAULT 100,
@@ -209,10 +209,11 @@ public class EFCoreWorkCoordinatorCoverageTests : EFCoreTestBase {
           attempts INTEGER,
           partition_number INTEGER,
           is_event BOOLEAN,
-          stream_position BIGINT
+          stream_position BIGINT,
+          derivation_scheme SMALLINT
         ) AS $fn$
           SELECT __MESSAGE_ID__::uuid, __STREAM_ID__::uuid, 'LegacyHandler'::varchar,
-                 'Legacy.Message'::varchar, '{}'::text, '{}'::jsonb, NULL::jsonb, 1, 0, 0, false, 1::bigint
+                 'Legacy.Message'::varchar, '{}'::text, '{}'::jsonb, NULL::jsonb, 1, 0, 0, false, 1::bigint, 0::smallint
         $fn$ LANGUAGE sql;
         """
         .Replace("__MESSAGE_ID__", $"'{messageId}'")

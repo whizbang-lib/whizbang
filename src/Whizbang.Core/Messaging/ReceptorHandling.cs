@@ -32,6 +32,12 @@ namespace Whizbang.Core.Messaging;
 internal static class ReceptorHandling {
   private static readonly AsyncLocal<Handling?> _current = new();
 
+  /// <summary>
+  /// The scheme this build runs a handling under (#2633), and stamps on an inbox row the first time it runs the row: a
+  /// receptor invoked locally from inside a handling runs in a handling of its own.
+  /// </summary>
+  internal static HandlingDerivationScheme CurrentScheme => HandlingDerivationScheme.OwnHandling;
+
   /// <summary>The envelope of the handling the current flow runs in, or null outside a receptor body.</summary>
   internal static IMessageEnvelope? Current => _current.Value?.Envelope;
 
@@ -53,6 +59,35 @@ internal static class ReceptorHandling {
     var handling = new Handling(envelope, serviceName ?? string.Empty, receptorId);
     _current.Value = handling;
     return new Scope(previous, handling);
+  }
+
+  /// <summary>
+  /// Enters the handling the body of <paramref name="serviceName"/>'s receptor <paramref name="receptorId"/> runs in when
+  /// generated local dispatch reaches it (#2633), until the returned scope is disposed. Only when a handling is already
+  /// active: the receptor then runs in a handling of its own, anchored on the id
+  /// <see cref="LocalInvocationIdentity"/> derives at the outer handling's next local-invocation ordinal and carried by a
+  /// wrapper envelope, the rule a nested local cascade follows. At top level it enters nothing and costs one ambient read:
+  /// a top-level local invoke has no handled message, so <c>DeriveFrom</c> keeps throwing there. Under
+  /// <see cref="HandlingDerivationScheme.SharedWithCaller"/> (a row that first ran on an earlier build), in an ended
+  /// handling, and in one whose message has no id, it enters nothing either, and the receptor shares the outer handling.
+  /// </summary>
+  internal static LocalReceptorHandlingScope EnterLocalInvocation(string serviceName, string receptorId) {
+    var outer = _current.Value;
+    return outer is null ? default : _enterNestedLocalInvocation(outer, serviceName, receptorId);
+  }
+
+  private static LocalReceptorHandlingScope _enterNestedLocalInvocation(Handling outer, string serviceName, string receptorId) {
+    if (!outer.IsActive || outer.Scheme == HandlingDerivationScheme.SharedWithCaller) {
+      return default;
+    }
+    var envelope = outer.Envelope!;
+    var outerAnchor = AnchorOf(envelope);
+    if (outerAnchor == Guid.Empty) {
+      return default;
+    }
+    var anchor = LocalInvocationIdentity.Derive(outerAnchor, serviceName, envelope.DispatchContext.HandlerName, outer.ReceptorId,
+      LocalInvocationIdentity.NextOrdinal(envelope));
+    return new LocalReceptorHandlingScope(Enter(new CascadeEnvelopeWrapper(envelope) { EmissionAnchor = anchor }, serviceName, receptorId));
   }
 
   /// <summary>

@@ -113,7 +113,7 @@ public class InboxDrainWorkerTests {
 
   private static readonly JsonSerializerOptions _jsonOpts = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
-  private static InboxBatchRow _row(Guid messageId, Guid streamId, int priority = 0) {
+  private static InboxBatchRow _row(Guid messageId, Guid streamId, int priority = 0, HandlingDerivationScheme? scheme = null) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonElement.Parse("{}"),
@@ -136,6 +136,7 @@ public class InboxDrainWorkerTests {
       PartitionNumber = 0,
       IsEvent = false,
       Priority = priority,
+      DerivationScheme = scheme,
     };
   }
 
@@ -146,6 +147,37 @@ public class InboxDrainWorkerTests {
   /// predate it (or carry the producer's declaration). The work item AND its envelope carry the row's number,
   /// because the handler and the inheritance rule read the envelope, not the row.
   /// </summary>
+  /// <summary>
+  /// #2633: the scheme the row first ran under rides on the work item, which the dispatch worker stamps on the envelope
+  /// its handling runs in, so a retry derives the first run's ids.
+  /// </summary>
+  [Test]
+  public async Task InboxDrainWorker_CarriesTheRowsDerivationSchemeOnTheWorkAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var coord = new FakeWorkCoordinator();
+    coord.RowsByStream[streamId] = [_row(msgId, streamId, scheme: HandlingDerivationScheme.SharedWithCaller)];
+    var drain = new FakeInboxDrainChannel();
+    var inbox = new CapturingInboxChannel { TargetCount = 1 };
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var worker = new InboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeServiceInstanceProvider(), drain, inbox, Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<InboxDrainWorker>.Instance);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drain.WriteAsync(streamId);
+    await inbox.ReachedCount.Task.WaitAsync(cts.Token);
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(inbox.Written.Single().DerivationScheme).IsEqualTo(HandlingDerivationScheme.SharedWithCaller);
+  }
+
   [Test]
   public async Task InboxDrainWorker_StampsTheRowsPriorityOnTheEnvelopeAsync() {
     var streamId = (Guid)TrackedGuid.New();
