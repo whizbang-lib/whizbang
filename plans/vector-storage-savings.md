@@ -222,8 +222,15 @@ reflection, both drivers where it applies, fixtures serialized from real types, 
   to how few digits it has, while the binary32 bits of a decimal value are close to random, so base64 of them barely
   compresses. The earlier consumer measurement (about 18.6 KB to 16.4 KB, about 17%) sits between the two corpora: its
   vectors carry fewer digits than full precision. A raw `bytea` form would reach 12.3 KB in both cases (a further 25%
-  over packed at full precision), and with 4 decimals it is still larger than the JSON numbers. Owner decision pending:
-  whether to keep packing on by default for every vector, or to pack only when it is smaller.
+  over packed at full precision), and with 4 decimals it is still larger than the JSON numbers.
+- **Owner decision (2026-11-28).** Packing stays on by default. The history pass (V4) packs a body only when the
+  packed body stores smaller, judged as storage pays for it: each candidate is written to a transaction-local copy of
+  `wh_event_body` with the same compression and its `pg_column_size` is compared with the stored body's. A body kept as
+  numbers is counted as kept, is not recorded in `wh_packed_vector_paths`, and is not read again once the walk
+  completes. The write paths are unchanged and pack every vector body once the gate is open; a vector rounded before it
+  is written is marked `[StoredAsJsonArray]` to keep new bodies as numbers. The unpack command stays SQL only, and its
+  hold ends only on an explicit `wh_resume_vector_packing`. A raw `bytea` form waits on a read-only measurement of the
+  digits real vectors carry.
 
 ### V6. Shared vectors for an opted-in field
 

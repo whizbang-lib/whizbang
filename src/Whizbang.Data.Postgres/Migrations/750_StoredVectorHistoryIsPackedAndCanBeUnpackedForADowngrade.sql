@@ -9,11 +9,19 @@
 --              Packing the history. 720 packs what the write paths store once the gate is open; the bodies stored
 --              before stay JSON numbers. wh_vector_history_pack_apply is one batch of the per-type history walker
 --              (380, operation pack-vectors) over a vector event type: the type's stamped events in commit order, a
---              window per transaction, resumable, one instance per type. It packs each body in the window at the
---              type's paths (the calling build's, which are the walk's variant, so a changed path set walks again)
---              and records each path in wh_packed_vector_paths first, in the same transaction. Only a body that
---              changes is written, so a body is packed once. A batch packs nothing while the gate is closed. No event
---              id, version or stream changes, and the integrity digests fold ids, never bodies.
+--              window per transaction, resumable, one instance per type. It packs a body in the window at the type's
+--              paths (the calling build's, which are the walk's variant, so a changed path set walks again) only when
+--              the packed body stores smaller, judged as storage pays for it: each candidate is written to a
+--              transaction-local copy of wh_event_body (LIKE ... INCLUDING COMPRESSION, so it is compressed by the
+--              same method at the same threshold) and its pg_column_size is compared with the stored body's. Short
+--              decimals compress well as numerics while their binary32 bits do not (measured, 2026-11-28: 11,351
+--              bytes as numbers against 12,960 packed for 4-decimal vectors; 26,613 against 16,476 at full
+--              precision), so a vector that was rounded before it was written stays JSON numbers. A body kept is
+--              counted as blocked on the walk, which moves past it and completes; it is read again only when the walk
+--              restarts. The paths are recorded in wh_packed_vector_paths only by a batch that packed a body, in the
+--              same transaction. A batch packs nothing while the gate is closed. The write paths are unchanged: they
+--              pack every vector body once the gate is open. No event id, version or stream changes, and the
+--              integrity digests fold ids, never bodies.
 --
 --              Unpacking for a downgrade. wh_request_vector_unpack(who, why) is the operator's command:
 --                the hold      one row in wh_vector_unpack_request. While it exists the gate stays closed
@@ -155,10 +163,13 @@ COMMENT ON FUNCTION __SCHEMA__.wh_vector_conversion_mode() IS
 -- Packing the history
 -- ===========================================================================================
 
--- One batch of the history pass: the window (p_after, p_through] of the type's commit sequences, packed at p_paths.
+-- One batch of the history pass: the window (p_after, p_through] of the type's commit sequences, each body packed at
+-- p_paths when the packed body stores smaller (compressed, as the table stores it) than the body stored now.
 -- <docs>data/event-store#packing-history</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorHistorySqlTests.cs:Pack_TheHistoryStoredBeforeTheGateOpened_InBatches_ResumesAfterOneBatch_AndPacksEachBodyOnceAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorHistorySqlTests.cs:Pack_ABatchWhoseGateClosedAfterTheStepLooked_IsSkipped_AndPacksNothingAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorHistorySqlTests.cs:Pack_KeepsABodyWhosePackedFormWouldStoreLarger_PacksOneThatStoresSmaller_AndFinishesOverTheMixAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Performance/PackedVectorBodySizeScenarioTests.cs:StoredBody_BeforeAndAfterPacking_ReportAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_vector_history_pack_apply(
   p_event_type TEXT,
   p_after BIGINT,
@@ -167,7 +178,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.wh_vector_history_pack_apply(
   p_rows_scanned BIGINT,
   p_paths JSONB
 )
-RETURNS TABLE(status TEXT, bodies_changed BIGINT, events_total BIGINT, events_matched BIGINT)
+RETURNS TABLE(status TEXT, bodies_changed BIGINT, bodies_kept BIGINT, events_total BIGINT, events_matched BIGINT)
 LANGUAGE plpgsql
 -- Planned with the real type and window, so the window is read through the type's index (as the other walk applies).
 SET plan_cache_mode = force_custom_plan
@@ -175,27 +186,28 @@ AS $$
 DECLARE
   c_operation CONSTANT TEXT := 'pack-vectors';
   v_type TEXT := __SCHEMA__.normalize_event_type(p_event_type);
+  v_candidates BIGINT := 0;
   v_changed BIGINT := 0;
   v_end RECORD;
 BEGIN
   IF NOT __SCHEMA__._wh_type_history_window_is_mine(c_operation, v_type, p_after) THEN
-    RETURN QUERY SELECT 'skipped (the window is no longer this call''s)'::TEXT, 0::BIGINT, 0::BIGINT, 0::BIGINT;
+    RETURN QUERY SELECT 'skipped (the window is no longer this call''s)'::TEXT, 0::BIGINT, 0::BIGINT, 0::BIGINT, 0::BIGINT;
     RETURN;
   END IF;
   IF NOT __SCHEMA__._wh_vector_packing_on() THEN
-    RETURN QUERY SELECT 'skipped (the packing gate is closed)'::TEXT, 0::BIGINT, 0::BIGINT, 0::BIGINT;
+    RETURN QUERY SELECT 'skipped (the packing gate is closed)'::TEXT, 0::BIGINT, 0::BIGINT, 0::BIGINT, 0::BIGINT;
     RETURN;
   END IF;
 
-  -- Every path is recorded as packed before anything packs it (same transaction).
-  INSERT INTO __SCHEMA__.wh_packed_vector_paths (event_type, path)
-  SELECT DISTINCT p_event_type, p.path FROM jsonb_array_elements(p_paths) AS p(path)
-  ON CONFLICT DO NOTHING;
-
-  UPDATE __SCHEMA__.wh_event_body b
-  SET event_data = w.packed
+  -- Each candidate stored as the table would store it: same columns, same compression, same threshold. Local to this
+  -- transaction, so nothing is logged and nothing outlives the batch.
+  CREATE TEMP TABLE IF NOT EXISTS pg_temp._wh_vector_pack_probe (LIKE __SCHEMA__.wh_event_body INCLUDING COMPRESSION)
+    ON COMMIT DROP;
+  TRUNCATE pg_temp._wh_vector_pack_probe;
+  INSERT INTO pg_temp._wh_vector_pack_probe (event_id, event_data, metadata)
+  SELECT w.event_id, w.packed, w.metadata
   FROM (
-    SELECT b2.event_id, b2.event_data AS stored, __SCHEMA__._wh_pack_vectors(b2.event_data, p_paths) AS packed
+    SELECT b2.event_id, b2.event_data AS stored, b2.metadata, __SCHEMA__._wh_pack_vectors(b2.event_data, p_paths) AS packed
     FROM __SCHEMA__.wh_event_store es
     JOIN __SCHEMA__.wh_event_body b2 ON b2.event_id = es.event_id
     WHERE es.event_type = v_type
@@ -203,20 +215,35 @@ BEGIN
       AND es.commit_sequence > COALESCE(p_after, -1)
       AND es.commit_sequence <= p_through
   ) w
-  WHERE b.event_id = w.event_id AND w.packed IS DISTINCT FROM w.stored;
+  WHERE w.packed IS DISTINCT FROM w.stored;
+  GET DIAGNOSTICS v_candidates = ROW_COUNT;
+
+  UPDATE __SCHEMA__.wh_event_body b
+  SET event_data = p.event_data
+  FROM pg_temp._wh_vector_pack_probe p
+  WHERE b.event_id = p.event_id AND pg_column_size(p.event_data) < pg_column_size(b.event_data);
   GET DIAGNOSTICS v_changed = ROW_COUNT;
 
-  SELECT * INTO v_end
-  FROM __SCHEMA__._wh_type_history_advance(c_operation, v_type, p_after, p_through, p_scan_size, p_rows_scanned, 0, v_changed, 0, 0);
+  -- A path is recorded as packed by the batch that packs a body at it, before the transaction commits.
+  IF v_changed > 0 THEN
+    INSERT INTO __SCHEMA__.wh_packed_vector_paths (event_type, path)
+    SELECT DISTINCT p_event_type, p.path FROM jsonb_array_elements(p_paths) AS p(path)
+    ON CONFLICT DO NOTHING;
+  END IF;
 
-  RETURN QUERY SELECT v_end.status, v_changed, v_end.events_total, v_end.events_matched;
+  SELECT * INTO v_end
+  FROM __SCHEMA__._wh_type_history_advance(
+    c_operation, v_type, p_after, p_through, p_scan_size, p_rows_scanned, 0, v_changed, 0, v_candidates - v_changed);
+
+  RETURN QUERY SELECT v_end.status, v_changed, v_candidates - v_changed, v_end.events_total, v_end.events_matched;
 END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_vector_history_pack_apply(TEXT, BIGINT, BIGINT, INTEGER, BIGINT, JSONB) IS
   'Issue #2627: one batch of the stored vector history pass (history walk operation pack-vectors): in the window '
-  '(p_after, p_through] of the type''s commit sequences, packs each body at p_paths, recording each path as packed '
-  'first. Packs nothing while the packing gate is closed.';
+  '(p_after, p_through] of the type''s commit sequences, packs each body at p_paths when the packed body stores smaller '
+  '(compressed, as the table stores it), keeping the rest as JSON numbers (bodies_kept), and records the paths as '
+  'packed only when it packed a body. Packs nothing while the packing gate is closed.';
 
 -- ===========================================================================================
 -- Unpacking

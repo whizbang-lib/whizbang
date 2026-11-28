@@ -82,6 +82,51 @@ public class PackedVectorHistorySqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Pack_KeepsABodyWhosePackedFormWouldStoreLarger_PacksOneThatStoresSmaller_AndFinishesOverTheMixAsync() {
+    await using var conn = await _openAsync();
+    var earlier = await _registerAnEarlierReleaseAsync(conn);
+    var rounded = await _appendAsync(conn, _embedding(1, decimals: 4));
+    var roundedBefore = await _scalarAsync<string>(conn, BODY_SQL, ("e", rounded));
+    var full = await _appendAsync(conn, _embedding(2, decimals: 0));
+    var roundedTwo = await _appendAsync(conn, _embedding(3, decimals: 4));
+    await _executeAsync(conn, "DELETE FROM wh_service_instances WHERE instance_id = @i", ("i", earlier));
+    await _openTheGateAsync();
+    // The gate recorded the registered paths as it opened; the record here is what the history pass writes.
+    await _executeAsync(conn, "DELETE FROM wh_packed_vector_paths");
+
+    var keptOnly = await _step(scanSize: 1, maxBatches: 1).ConvertAsync(_services(), CancellationToken.None);
+    var recordedAfterKeptOnly = await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_packed_vector_paths");
+    var rest = await _step(scanSize: 1, maxBatches: 10).ConvertAsync(_services(), CancellationToken.None);
+    var again = await _step(scanSize: 1, maxBatches: 10).ConvertAsync(_services(), CancellationToken.None);
+
+    await Assert.That(keptOnly.BodiesChanged).IsEqualTo(0L).Because("control: the first window holds only the rounded body");
+    await Assert.That(keptOnly.BodiesKept).IsEqualTo(1L);
+    await Assert.That(recordedAfterKeptOnly).IsEqualTo(0L).Because("a body left as numbers is not a packed body: nothing needs a reader");
+    await Assert.That(await _scalarAsync<string>(conn, BODY_SQL, ("e", rounded))).IsEqualTo(roundedBefore)
+      .Because("short decimals store smaller as numbers than packed, so the body stays as it was written");
+    await Assert.That(rest.BodiesChanged).IsEqualTo(1L);
+    await Assert.That(rest.BodiesKept).IsEqualTo(1L);
+    await Assert.That(rest.Status).IsEqualTo("finished").Because("the walk moves past a kept body and completes over the mix");
+    await Assert.That(await _packedCountAsync(conn, [rounded, full, roundedTwo])).IsEqualTo(1);
+    await Assert.That(await _packedCountAsync(conn, [full])).IsEqualTo(1).Because("full-precision floats store smaller packed");
+    await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_packed_vector_paths WHERE event_type = @t", ("t", _sampleType)))
+      .IsGreaterThan(0L).Because("the batch that packed a body recorded its paths");
+    await Assert.That(again.Batches).IsEqualTo(0).Because("a kept body is not read again once the walk is complete");
+    await Assert.That(await _scalarAsync<long>(conn,
+      "SELECT events_blocked FROM wh_type_history_walks WHERE operation = 'pack-vectors' AND event_type = @t", ("t", _sampleType)))
+      .IsEqualTo(2L).Because("the walk records the bodies it kept as numbers");
+    await Assert.That(again.BodiesKept).IsEqualTo(0L);
+
+    _ = await _scalarAsync<string>(conn, "SELECT wh_request_vector_unpack('ops', 'planned downgrade')");
+    var unpacked = await _step(scanSize: 10, maxBatches: 10).ConvertAsync(_services(), CancellationToken.None);
+
+    await Assert.That(unpacked.Status).IsEqualTo(StoredVectorConversionStep.UNPACKED);
+    await Assert.That(await _packedCountAsync(conn, [rounded, full, roundedTwo])).IsEqualTo(0);
+    await Assert.That(await _scalarAsync<string>(conn, BODY_SQL, ("e", rounded))).IsEqualTo(roundedBefore);
+    await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_packed_vector_paths")).IsEqualTo(0L);
+  }
+
+  [Test]
   public async Task Pack_WhileTheGateIsClosed_DoesNothing_AndStartsNoWalkAsync() {
     await using var conn = await _openAsync();
     _ = await _registerAnEarlierReleaseAsync(conn);
@@ -343,6 +388,21 @@ public class PackedVectorHistorySqlTests : EFCoreTestBase {
       Lead = new PackedVectorChunk("lead", vector(8)),
       Centroid = vector(4),
       Weights = [0.1, 0.2],
+    };
+  }
+
+  /// <summary>A 3,072-dimension embedding event, at full precision or rounded to a few decimals.</summary>
+  private static PackedVectorSampleEvent _embedding(int seed, int decimals) {
+    var random = new Random(seed);
+    float value() {
+      var v = (random.NextDouble() - 0.5) / 10;
+      return (float)(decimals == 0 ? v : Math.Round(v, decimals));
+    }
+    return new PackedVectorSampleEvent {
+      PassageId = (Guid)TrackedGuid.New(),
+      Text = $"chunk {seed}",
+      Embedding = [.. Enumerable.Range(0, 3072).Select(_ => value())],
+      Lead = new PackedVectorChunk("lead", [value()]),
     };
   }
 

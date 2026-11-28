@@ -21,20 +21,23 @@ namespace Whizbang.Data.Postgres;
 /// <param name="Batches">The batches it ran, of the event store walk and of the archive.</param>
 /// <param name="BodiesScanned">Stored bodies read.</param>
 /// <param name="BodiesChanged">Bodies packed, or unpacked.</param>
+/// <param name="BodiesKept">Bodies the history pass left as JSON numbers because packed they would store larger
+/// (#2627); 0 when unpacking.</param>
 /// <param name="BodiesLeft">Event store bodies the walks have yet to read.</param>
 /// <param name="Status">The last batch's status, or, when unpacking, the finish's: <c>unpacked</c> or
 /// <c>unpacking (...)</c>.</param>
 /// <docs>data/event-store#packing-history</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorHistorySqlTests.cs:Pack_TheHistoryStoredBeforeTheGateOpened_InBatches_ResumesAfterOneBatch_AndPacksEachBodyOnceAsync</tests>
 public readonly record struct StoredVectorConversionResult(
-  string Mode, int Batches, long BodiesScanned, long BodiesChanged, long BodiesLeft, string Status);
+  string Mode, int Batches, long BodiesScanned, long BodiesChanged, long BodiesKept, long BodiesLeft, string Status);
 
 /// <summary>
 /// The maintenance step that converts the vector bodies already stored (#2627, V4 of the vector storage plan). Once the
 /// packing gate is open (<see cref="VectorPackingGateStep"/>), it packs the bodies stored before it opened: for each
 /// event type this service declares vector paths for (<see cref="StoredVectorPaths"/>), it walks the type's events
-/// through the per-type history walker (<see cref="TypeHistoryWalker"/>, operation <c>pack-vectors</c>) and packs each
-/// body at the type's paths. While an operator's unpack request is open (<c>wh_request_vector_unpack</c>, before a
+/// through the per-type history walker (<see cref="TypeHistoryWalker"/>, operation <c>pack-vectors</c>) and packs a
+/// body at the type's paths only when the packed body stores smaller, compressed as the table stores it: a vector that
+/// was rounded before it was written stores smaller as JSON numbers, and is kept (<see cref="StoredVectorConversionResult.BodiesKept"/>). While an operator's unpack request is open (<c>wh_request_vector_unpack</c>, before a
 /// planned downgrade), it instead writes every packed vector back as JSON numbers, in the event store (operation
 /// <c>unpack-vectors</c>, every type with a recorded packed path) and in the archive, and then completes the request:
 /// the record of packed paths and the journal entry go, so the build being returned to starts.
@@ -126,10 +129,10 @@ public sealed partial class StoredVectorConversionStep : IMaintenanceStep {
     var result = mode switch {
       MODE_PACK => await _packAsync(database, cancellationToken).ConfigureAwait(false),
       MODE_UNPACK => await _unpackAsync(database, prefix, cancellationToken).ConfigureAwait(false),
-      _ => new StoredVectorConversionResult(mode, 0, 0, 0, 0, mode == MODE_HELD ? UNPACKED : MODE_CLOSED),
+      _ => new StoredVectorConversionResult(mode, 0, 0, 0, 0, 0, mode == MODE_HELD ? UNPACKED : MODE_CLOSED),
     };
     if (result.BodiesChanged > 0) {
-      LogConverted(_logger, result.Mode, result.BodiesChanged, result.BodiesScanned, result.BodiesLeft, result.Status);
+      LogConverted(_logger, result.Mode, result.BodiesChanged, result.BodiesKept, result.BodiesScanned, result.BodiesLeft, result.Status);
     } else {
       LogNothing(_logger, result.Mode, result.Status);
     }
@@ -145,7 +148,8 @@ public sealed partial class StoredVectorConversionStep : IMaintenanceStep {
       .ToList();
     var walk = await new TypeHistoryWalker(PACK_OPERATION, _scanSize, _maxBatches)
       .WalkAsync(database, targets, _packBatchAsync, cancellationToken).ConfigureAwait(false);
-    return new StoredVectorConversionResult(MODE_PACK, walk.Batches, walk.Scanned, walk.Changed, walk.Types.Sum(c => c.Left), walk.Status);
+    return new StoredVectorConversionResult(
+      MODE_PACK, walk.Batches, walk.Scanned, walk.Changed, walk.Blocked, walk.Types.Sum(c => c.Left), walk.Status);
   }
 
   // The unpack: every type with a recorded packed path, then the archive, then the finish.
@@ -187,7 +191,7 @@ public sealed partial class StoredVectorConversionStep : IMaintenanceStep {
     if (finish == UNPACKED) {
       LogUnpacked(_logger);
     }
-    return new StoredVectorConversionResult(MODE_UNPACK, batches, scanned, changed, walk.Types.Sum(c => c.Left), finish);
+    return new StoredVectorConversionResult(MODE_UNPACK, batches, scanned, changed, 0, walk.Types.Sum(c => c.Left), finish);
   }
 
   /// <summary>One type's vector paths as the SQL reads them: <c>[[segment, ...], ...]</c>.</summary>
@@ -218,7 +222,7 @@ public sealed partial class StoredVectorConversionStep : IMaintenanceStep {
   private static async Task<TypeHistoryBatch> _packBatchAsync(
       NpgsqlTransaction transaction, string prefix, TypeHistoryTarget target, TypeHistoryWindow window, CancellationToken cancellationToken) {
     await using var command = new NpgsqlCommand(
-      "SELECT status, bodies_changed, events_total, events_matched " +
+      "SELECT status, bodies_changed, bodies_kept, events_total, events_matched " +
       $"FROM {prefix}wh_vector_history_pack_apply($1, $2, $3, $4, $5, $6::jsonb)", transaction.Connection, transaction);
     _window(command, target.EventType, window);
     // The walk's variant is the type's paths, so a changed path set walks the type again.
@@ -229,7 +233,7 @@ public sealed partial class StoredVectorConversionStep : IMaintenanceStep {
   private static async Task<TypeHistoryBatch> _unpackBatchAsync(
       NpgsqlTransaction transaction, string prefix, TypeHistoryTarget target, TypeHistoryWindow window, CancellationToken cancellationToken) {
     await using var command = new NpgsqlCommand(
-      "SELECT status, bodies_changed, events_total, events_matched " +
+      "SELECT status, bodies_changed, 0::bigint, events_total, events_matched " +
       $"FROM {prefix}wh_vector_history_unpack_apply($1, $2, $3, $4, $5)", transaction.Connection, transaction);
     _window(command, target.EventType, window);
     return await _batchAsync(command, cancellationToken).ConfigureAwait(false);
@@ -246,12 +250,12 @@ public sealed partial class StoredVectorConversionStep : IMaintenanceStep {
   private static async Task<TypeHistoryBatch> _batchAsync(NpgsqlCommand command, CancellationToken cancellationToken) {
     await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-    return new TypeHistoryBatch(reader.GetString(0), reader.GetInt64(1), 0, 0, reader.GetInt64(2), reader.GetInt64(3));
+    return new TypeHistoryBatch(reader.GetString(0), reader.GetInt64(1), 0, reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4));
   }
 
   [LoggerMessage(Level = LogLevel.Information,
-    Message = "Stored vector conversion ({Mode}): {Changed} body(ies) converted of {Scanned} read; {Left} left to read ({Status})")]
-  static partial void LogConverted(ILogger logger, string mode, long changed, long scanned, long left, string status);
+    Message = "Stored vector conversion ({Mode}): {Changed} body(ies) converted and {Kept} kept as numbers of {Scanned} read; {Left} left to read ({Status})")]
+  static partial void LogConverted(ILogger logger, string mode, long changed, long kept, long scanned, long left, string status);
 
   [LoggerMessage(Level = LogLevel.Debug, Message = "Stored vector conversion ({Mode}) converted nothing ({Status})")]
   static partial void LogNothing(ILogger logger, string mode, string status);

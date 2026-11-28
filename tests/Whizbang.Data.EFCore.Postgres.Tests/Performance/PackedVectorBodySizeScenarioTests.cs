@@ -38,14 +38,15 @@ public sealed record PackedVectorMeasuredEvent([property: StreamId] Guid ChunkId
 /// <para>
 /// Reported per event: the body's text length (what the JSON is), its stored size (<c>pg_column_size</c>, after the
 /// column's lz4 compression, which is what the table pays), and the stored size of the raw bits alone. The table's size
-/// after a rewrite (<c>VACUUM FULL</c>) before and after. Gates: the packed text is always shorter; at full precision the
-/// stored body is over 30% smaller; with 4 decimals it is larger, which the docs record as the trade-off.
+/// after a rewrite (<c>VACUUM FULL</c>) before and after, and what each body would store packed, measured as the pass
+/// judges it (a copy of the table with the same compression). Gates: at full precision every body is packed and stores
+/// over 30% smaller; with 4 decimals packing would store larger, so the pass keeps every body as JSON numbers.
 /// </para>
 /// <para>
 /// Measured (PostgreSQL in the local test container, 2026-11-28, per event): full precision, JSON numbers 41,218
 /// characters stored in 26,613 bytes after lz4, packed 16,472 characters stored in 16,476 bytes (38.1% smaller; the table
 /// after a rewrite 35.4% smaller); 4 decimals, JSON numbers 25,850 characters stored in 11,351 bytes, packed stored in
-/// 12,960 bytes (14.2% larger). The raw bits alone store in 12,292 bytes. jsonb holds each number as a numeric, which lz4
+/// 12,960 bytes (14.2% larger), so the history pass now keeps them. The raw bits alone store in 12,292 bytes. jsonb holds each number as a numeric, which lz4
 /// compresses in proportion to how few digits it has, while binary32 bits of a decimal value are close to random: the
 /// saving depends on the vectors' digits, not on their dimension.
 /// </para>
@@ -87,6 +88,7 @@ public class PackedVectorBodySizeScenarioTests : EFCoreTestBase {
     await _executeAsync(conn, "SELECT stamp_pending_commit_sequences(100000)");
 
     var before = await _measureAsync(conn, type, cancellationToken);
+    var packedWouldStore = await _packedWouldStoreAsync(conn, type);
     await _executeAsync(conn, "DELETE FROM wh_service_instances WHERE instance_id = @i", ("i", earlier));
     var services = _services();
     await using (var dbContext = CreateDbContext()) {
@@ -95,33 +97,53 @@ public class PackedVectorBodySizeScenarioTests : EFCoreTestBase {
     }
     await Assert.That(await new VectorPackingGateStep(NullLogger<VectorPackingGateStep>.Instance).OpenAsync(services, cancellationToken))
       .IsEqualTo(VectorPackingGateStep.OPENED);
+    long kept = 0;
     StoredVectorConversionResult pass;
     do {
       pass = await StoredVectorConversionStep.FromServices(services).ConvertAsync(services, cancellationToken);
+      kept += pass.BodiesKept;
     } while (pass.Status == "ok");
     var after = await _measureAsync(conn, type, cancellationToken);
     var raw = await _scalarAsync<double>(conn, """
-      SELECT avg(pg_column_size(decode(b.event_data ->> 'Embedding', 'base64')))::float8
+      SELECT avg(pg_column_size(decode(_wh_pack_vectors(b.event_data, '[["Embedding"]]'::jsonb) ->> 'Embedding', 'base64')))::float8
       FROM wh_event_body b JOIN wh_event_store es ON es.event_id = b.event_id WHERE es.event_type = @t
       """, ("t", type));
 
     Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
       $"Vector event body, {EVENTS} events of {DIMENSIONS} floats ({(decimals == 0 ? "full precision" : $"{decimals} decimals")}): JSON numbers {before.Text:F0} chars, stored {before.Stored:F0} B; " +
-      $"packed {after.Text:F0} chars, stored {after.Stored:F0} B ({1 - (after.Stored / before.Stored):P1} smaller stored, " +
+      $"packed it would store {packedWouldStore:F0} B ({1 - (packedWouldStore / before.Stored):P1} smaller); {kept} of {EVENTS} kept as numbers; " +
+      $"after the pass {after.Text:F0} chars, stored {after.Stored:F0} B ({1 - (after.Stored / before.Stored):P1} smaller stored, " +
       $"{1 - (after.Text / before.Text):P1} smaller as text); raw bits stored {raw:F0} B; " +
       $"table after a rewrite {before.Table:N0} B -> {after.Table:N0} B ({1 - ((double)after.Table / before.Table):P1} smaller)"));
 
-    await Assert.That(after.Text).IsLessThan(before.Text).Because("base64 of the bits is shorter than the JSON numbers' text");
-    await Assert.That(raw).IsLessThan(after.Stored + 1).Because("the raw bits are the floor any binary32 form can reach");
+    await Assert.That(raw).IsLessThan(packedWouldStore + 1).Because("the raw bits are the floor any binary32 form can reach");
     if (decimals == 0) {
-      // Full-precision floats, as a model writes them: the numbers' digits do not compress, so packing wins.
+      // Full-precision floats, as a model writes them: the numbers' digits do not compress, so every body is packed.
+      await Assert.That(kept).IsEqualTo(0L);
       await Assert.That(after.Stored).IsLessThan(before.Stored * 0.7).Because("packing saves over 30% of a full-precision vector body");
+      await Assert.That(after.Text).IsLessThan(before.Text);
       await Assert.That(after.Table).IsLessThan(before.Table);
     } else {
-      // Short decimals compress well as numeric; their binary32 bits do not, so packing costs space. Locked so the
-      // documented trade-off cannot change unnoticed.
-      await Assert.That(after.Stored).IsGreaterThan(before.Stored).Because("lz4 compresses short decimal numerics below the packed bits");
+      // Short decimals compress well as numerics and their binary32 bits do not: packed they would store larger, so the
+      // history pass keeps every one as it was written.
+      await Assert.That(packedWouldStore).IsGreaterThan(before.Stored).Because("control: packing these bodies would cost space");
+      await Assert.That(kept).IsEqualTo((long)EVENTS);
+      await Assert.That(after.Stored).IsEqualTo(before.Stored).Because("the pass left every body as JSON numbers");
     }
+  }
+
+  // What the bodies would store packed, measured the way the pass judges it: written to a copy of the table with the same
+  // compression, so each is compressed as the table would compress it.
+  private static async Task<double> _packedWouldStoreAsync(NpgsqlConnection conn, string type) {
+    await _executeAsync(conn, "CREATE TEMP TABLE packed_probe (LIKE wh_event_body INCLUDING COMPRESSION)");
+    await _executeAsync(conn, """
+      INSERT INTO packed_probe (event_id, event_data, metadata)
+      SELECT b.event_id, _wh_pack_vectors(b.event_data, '[["Embedding"]]'::jsonb), b.metadata
+      FROM wh_event_body b JOIN wh_event_store es ON es.event_id = b.event_id WHERE es.event_type = @t
+      """, ("t", type));
+    var size = await _scalarAsync<double>(conn, "SELECT avg(pg_column_size(event_data))::float8 FROM packed_probe");
+    await _executeAsync(conn, "DROP TABLE packed_probe");
+    return size;
   }
 
   private readonly record struct Measure(double Text, double Stored, long Table);
