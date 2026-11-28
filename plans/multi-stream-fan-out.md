@@ -1,8 +1,7 @@
 # Multi-stream fan-out: one foreign event, many rows (#2275)
 
 Status: F1 to F3 merged (PR #2641); F4 (#2621), F5 (#2622) and the sync-wait follow-up (#2637) built on
-feat/2621-fanout-replay (2026-11-28), with one F5 window left open for an owner decision (see F5, "As built"); F6 not
-started. Design decided by the owner on 2026-11-25. Release: 1.0 (Release 1.0 Planning board). Tracking: #2275
+feat/2621-fanout-replay (2026-11-28); F6 not started. Design decided by the owner on 2026-11-25. Release: 1.0 (Release 1.0 Planning board). Tracking: #2275
 (question, accepted); each slice below is its own issue.
 
 ## Decision
@@ -206,12 +205,15 @@ below is produced by holding a worker at a named point, never by a delay.
   event after it through `_wh_rewind_perspectives_from`. Rule 2: a live batch of a fan-out model runs the same fan-out
   fold as a replay, from the batch's first event, so a fan-out the sink already applied (per its reach) folds again
   after the own event it was committed after; one still queued is left to the sink. Fan-outs folded live are not added
-  to the batch's processed events. **Not built: the per-key lock.** The runner's read and write are separate
-  transactions and connections (and most connections go through a transaction-pooling proxy), so a shared advisory
-  lock cannot span them without restructuring the apply. The remaining window (the sink's update misses a row whose
-  key is written a moment later, and the runner's read misses the sink's commit) is open; the plan's alternative, a key
-  lookup after the row commits that rewinds the row when a completed fan-out of its key was not folded, is the
-  recommended close. Owner decision.
+  to the batch's processed events. **The per-key lock is replaced by a lookup after the write (owner, 2026-11-28).**
+  The runner's read and write are separate transactions and connections (most through a transaction-pooling proxy), so
+  a lock cannot span them. After each live write of a fan-out row the runner calls `wh_rewind_row_fan_outs_missed`
+  (migration 761): one read of each key's stream by `(stream_id, version)`, finding a fan-out of the model's types
+  committed after the row took the key, not folded by the write, whose sink row is no longer pending. Only on such a
+  miss does it write: it creates the row's cursor if its first completion has not, and flags a rewind from the batch's
+  first event. A sink apply that completed after the write and before the lookup also counts, which costs a needless
+  rewind and never a wrong row. Measured on a million events: 0.15 ms and 16 buffers for a miss, 0.7 ms and 46
+  buffers for no miss, one index scan of the key's stream.
 - **#2637 (sync waits).** After a fan-out's apply commits, the sink marks the event applied and processed under each
   perspective that fans it out (once per perspective), so a sync wait on that perspective completes. No lifecycle stage
   fires per row; owner decision recorded as a recommendation.
