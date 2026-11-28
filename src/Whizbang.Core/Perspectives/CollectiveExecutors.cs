@@ -9,15 +9,15 @@ namespace Whizbang.Core.Perspectives;
 /// needs no executor registration; one registered for the model still wins.
 /// </summary>
 /// <docs>fundamentals/perspectives/multi-stream#how-a-fan-out-applies-live</docs>
-/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FanOutWiringTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/FanOutWiringTests.cs</tests>
 public static class CollectiveExecutors {
   /// <summary>The registered executors, then one per fan-out model that has none.</summary>
   /// <param name="registered">The executors registered in the container.</param>
   /// <param name="fanOuts">The host's fan-outs.</param>
   /// <param name="factory">The driver's executor factory.</param>
   /// <returns>Every executor the dispatcher runs, one per model.</returns>
-  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FanOutWiringTests.cs:ForDispatch_CreatesOneExecutorPerFanOutModelThatHasNone_AndKeepsTheRegisteredOnesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FanOutWiringTests.cs:ForDispatch_AFanOutWithNoFactoryLambda_GetsNoExecutorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/FanOutWiringTests.cs:ForDispatch_CreatesOneExecutorPerFanOutModelThatHasNone_AndKeepsTheRegisteredOnesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/FanOutWiringTests.cs:ForDispatch_AFanOutWithNoFactoryLambda_GetsNoExecutorAsync</tests>
   public static IReadOnlyList<ICollectiveEventExecutor> ForDispatch(
       IReadOnlyList<ICollectiveEventExecutor> registered, IReadOnlyList<PerspectiveFanOutEntry> fanOuts,
       ICollectiveExecutorFactory factory) {

@@ -50,7 +50,7 @@ public static class PerspectiveFanOutRegistryServiceCollectionExtensions {
   /// <param name="services">The service collection.</param>
   /// <returns>The service collection.</returns>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveFanOutRegistryTests.cs:TwoAssemblies_TheServedRegistry_ListsBothAssemblysFanOuts_LatestFirstAsync</tests>
-  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FanOutWiringTests.cs:AddPerspectiveFanOutRegistryContribution_RegistersTheValidator_OnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/FanOutWiringTests.cs:AddPerspectiveFanOutRegistryContribution_RegistersTheValidator_OnceAsync</tests>
   public static IServiceCollection AddPerspectiveFanOutRegistryContribution<TRegistry>(this IServiceCollection services)
       where TRegistry : class, IPerspectiveFanOutRegistry {
     ArgumentNullException.ThrowIfNull(services);

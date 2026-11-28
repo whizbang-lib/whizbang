@@ -10,7 +10,7 @@ namespace Whizbang.Core.Perspectives;
 /// the generator emits, so no type is made at run time.
 /// </summary>
 /// <docs>fundamentals/perspectives/multi-stream#how-a-fan-out-applies-live</docs>
-/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FanOutWiringTests.cs:ForDispatch_CreatesOneExecutorPerFanOutModelThatHasNone_AndKeepsTheRegisteredOnesAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/FanOutWiringTests.cs:ForDispatch_CreatesOneExecutorPerFanOutModelThatHasNone_AndKeepsTheRegisteredOnesAsync</tests>
 public interface ICollectiveExecutorFactory {
   /// <summary>The driver's executor for <typeparamref name="TModel"/>.</summary>
   /// <typeparam name="TModel">The model the executor updates rows of.</typeparam>

@@ -21,13 +21,13 @@ namespace Whizbang.Core.Perspectives;
 /// </remarks>
 /// <param name="services">The host's services.</param>
 /// <docs>fundamentals/perspectives/multi-stream#how-a-fan-out-applies-live</docs>
-/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FanOutWiringTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/FanOutWiringTests.cs</tests>
 public sealed class PerspectiveFanOutWiringValidator(IServiceProvider services) : IHostedService {
   private readonly IServiceProvider _services = services ?? throw new ArgumentNullException(nameof(services));
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FanOutWiringTests.cs:Validator_AFanOutWithNoCollectiveDispatcher_RefusesTheHost_NamingTheModelAndTheLineAsync</tests>
-  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FanOutWiringTests.cs:Validator_AFanOutModelNoExecutorCanBeMadeFor_RefusesTheHost_NamingTheLineAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/FanOutWiringTests.cs:Validator_AFanOutWithNoCollectiveDispatcher_RefusesTheHost_NamingTheModelAndTheLineAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/FanOutWiringTests.cs:Validator_AFanOutModelNoExecutorCanBeMadeFor_RefusesTheHost_NamingTheLineAsync</tests>
   public Task StartAsync(CancellationToken cancellationToken) {
     var fanOuts = _services.GetPerspectiveFanOutEntries();
     if (fanOuts.Count == 0) {
