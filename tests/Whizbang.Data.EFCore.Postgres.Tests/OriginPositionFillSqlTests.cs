@@ -166,11 +166,11 @@ public partial class OriginPositionFillSqlTests : EFCoreTestBase {
       CancellationToken.None)).ToDictionary(l => l.EventId);
 
     await Assert.That(lookups.Count).IsEqualTo(6).Because("an id asked twice is answered once");
-    await Assert.That(lookups[stamped]).IsEqualTo(new OriginPositionLookup(stamped, "positioned", stampedSequence));
-    await Assert.That(lookups[unstamped]).IsEqualTo(new OriginPositionLookup(unstamped, "unstamped", null));
+    await Assert.That(_withoutBucket(lookups[stamped])).IsEqualTo(new OriginPositionLookup(stamped, "positioned", stampedSequence));
+    await Assert.That(_withoutBucket(lookups[unstamped])).IsEqualTo(new OriginPositionLookup(unstamped, "unstamped", null));
     await Assert.That(lookups[received].State).IsEqualTo("unknown")
       .Because("an event this service received from another is not its to place");
-    await Assert.That(lookups[archived]).IsEqualTo(new OriginPositionLookup(archived, "archived", 41));
+    await Assert.That(_withoutBucket(lookups[archived])).IsEqualTo(new OriginPositionLookup(archived, "archived", 41));
     await Assert.That(lookups[archivedNoSequence].State).IsEqualTo("unknown");
     await Assert.That(lookups[never].State).IsEqualTo("unknown");
   }
@@ -986,6 +986,10 @@ public partial class OriginPositionFillSqlTests : EFCoreTestBase {
   }
 
   // ── fixture ──────────────────────────────────────────────────────────
+
+  // #2588: the answer also names each event's bucket; these assertions are about the state and the sequence.
+  private static OriginPositionLookup _withoutBucket(OriginPositionLookup lookup) =>
+    lookup with { TenantScope = null, EventType = null, StreamId = null };
 
   private sealed class AnswerLogger : ILogger<OriginPositionsAnswerReceptor> {
     public List<(LogLevel Level, string Message)> Entries { get; } = [];

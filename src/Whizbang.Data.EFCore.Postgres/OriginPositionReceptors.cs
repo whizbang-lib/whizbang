@@ -50,7 +50,10 @@ public sealed partial class RequestOriginPositionsReceptor(
       RequestId = message.RequestId,
       // The lookup gives a positioned or archived event its sequence, always.
       Positions = [.. lookups.Where(l => l.State is "positioned" or "archived")
-        .Select(l => new OriginPosition(l.EventId, l.CommitSequence!.Value))],
+        .Select(l => new OriginPosition(l.EventId, l.CommitSequence!.Value) {
+          // #2588: the bucket it is counted in, for an asker that excluded it.
+          TenantScope = l.TenantScope, EventType = l.EventType, StreamId = l.StreamId,
+        })],
       NotYetStamped = [.. lookups.Where(l => l.State == "unstamped").Select(l => l.EventId)],
       Unknown = [.. lookups.Where(l => l.State == "unknown").Select(l => l.EventId)],
     };
@@ -102,6 +105,17 @@ public sealed partial class OriginPositionsAnswerReceptor(
       return;
     }
     var now = (services.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow();
+    // #2588: the answer settles the pending exclusions it names first. An excluded event is resolved by decision, so its
+    // position is not filled (a fill can reorder a stream and rewind its perspectives) and its unknown answer not kept.
+    var excluded = await new IntegrityExclusionStore(database).SettleAsync(message, now, cancellationToken).ConfigureAwait(false);
+    if (excluded.Count > 0) {
+      LogExclusionsSettled(logger, excluded.Count, message.OriginServiceName, message.OriginServiceId);
+      message = message with {
+        Positions = [.. message.Positions.Where(p => !excluded.Contains(p.EventId))],
+        NotYetStamped = [.. message.NotYetStamped.Where(id => !excluded.Contains(id))],
+        Unknown = [.. message.Unknown.Where(id => !excluded.Contains(id))],
+      };
+    }
     var result = await new OriginPositionStore(database).FillAsync(message, now, cancellationToken).ConfigureAwait(false);
     var metrics = services.GetService<StreamIntegrityMetrics>();
     if (metrics is not null) {
@@ -133,6 +147,11 @@ public sealed partial class OriginPositionsAnswerReceptor(
               "perspective reads still has a body (reaped past its retention), so nothing can be replayed and the cursor " +
               "stays where it is (first: perspective {PerspectiveName}, stream {StreamId}, from event {TriggerEventId}) (#2591)")]
   static partial void LogRewindsSkipped(ILogger logger, int count, string perspectiveName, Guid streamId, Guid triggerEventId);
+
+  [LoggerMessage(EventId = 4, Level = LogLevel.Information,
+    Message = "The answer from '{OriginServiceName}' ({OriginServiceId}) named {Count} event(s) excluded from integrity: their " +
+              "marks are settled, and their positions are not filled (#2588)")]
+  static partial void LogExclusionsSettled(ILogger logger, int count, string? originServiceName, Guid originServiceId);
 
   [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
     Message = "Origin positions answered by {OriginServiceId} received, but no database connection is registered; ignored")]

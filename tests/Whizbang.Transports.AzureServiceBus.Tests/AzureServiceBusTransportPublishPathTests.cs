@@ -6,12 +6,14 @@ using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Testing.Async;
 
 namespace Whizbang.Transports.AzureServiceBus.Tests;
 
@@ -160,6 +162,55 @@ public class AzureServiceBusTransportPublishPathTests {
     await Assert.That(logger.ContainsWithException(LogLevel.Warning, "Failed to publish message")).IsTrue();
     await Assert.That(logger.AnyAtOrAbove(LogLevel.Error)).IsFalse();
     await cts.CancelAsync();
+  }
+
+  /// <summary>
+  /// The send timeout is the send's own deadline on the injected clock, and it goes the moment the send completes
+  /// (loop-waits audit). A delay raced against the send stayed armed for the whole SendTimeout after every message, one
+  /// timer and one token registration per publish, and ran on the system clock, so no test could see it.
+  /// </summary>
+  [Test]
+  public async Task PublishAsync_SendCompletesInTime_LeavesNoTimeoutRunningAsync() {
+    // Continuations run inline: completing the send runs the rest of the publish, and the deadline's own cleanup, on
+    // this thread before SetResult returns, so what the test reads next is settled.
+    var send = new TaskCompletionSource();
+    var client = new RaisableServiceBusClient { HeldSend = send.Task };
+    var clock = new CountingTimeProvider(new FakeTimeProvider());
+    var (transport, _) = _createTransport(client: client, timeProvider: clock);
+
+    var publishing = transport.PublishAsync(AsbTransportTestData.CreateEnvelope(), _destination());
+    await clock.Armed(1);
+    var armedWhileSending = clock.ArmedTimers;
+    send.SetResult();
+    await publishing;
+    await clock.Disarmed(1);
+
+    await Assert.That(armedWhileSending).IsEqualTo(1)
+      .Because("the send timeout runs on the injected clock while the send is in flight");
+    await Assert.That(clock.ArmedTimers).IsEqualTo(0)
+      .Because("a send that completed in time must not leave its timeout armed for the rest of SendTimeout");
+    await Assert.That(clock.LiveTimers).IsEqualTo(0);
+  }
+
+  /// <summary>The timeout fires on the injected clock: a send still pending when it passes surfaces a TimeoutException.</summary>
+  [Test]
+  public async Task PublishAsync_SendPendingPastSendTimeoutOnTheInjectedClock_ThrowsTimeoutExceptionAsync() {
+    var client = new RaisableServiceBusClient { HeldSend = new TaskCompletionSource().Task };
+    var fake = new FakeTimeProvider();
+    var clock = new CountingTimeProvider(fake);
+    var options = new AzureServiceBusOptions {
+      AutoProvisionInfrastructure = false,
+      EnableSessions = false,
+      SendTimeout = TimeSpan.FromSeconds(30),
+    };
+    var (transport, _) = _createTransport(options: options, client: client, timeProvider: clock);
+
+    var publishing = transport.PublishAsync(AsbTransportTestData.CreateEnvelope(), _destination());
+    await clock.Armed(1);
+    fake.Advance(options.SendTimeout);
+
+    var ex = await Assert.ThrowsAsync<TimeoutException>(async () => await publishing);
+    await Assert.That(ex!.Message).Contains("timed out");
   }
 
   /// <summary>
@@ -372,13 +423,15 @@ public class AzureServiceBusTransportPublishPathTests {
   private static (AzureServiceBusTransport Transport, RaisableServiceBusClient Client) _createTransport(
     AzureServiceBusOptions? options = null,
     RecordingTransportLogger? logger = null,
-    RaisableServiceBusClient? client = null) {
+    RaisableServiceBusClient? client = null,
+    TimeProvider? timeProvider = null) {
     client ??= new RaisableServiceBusClient();
     var transport = new AzureServiceBusTransport(
       client,
       AsbTransportTestData.CombinedOptions,
       options ?? new AzureServiceBusOptions { AutoProvisionInfrastructure = false, EnableSessions = false },
-      (ILogger<AzureServiceBusTransport>?)logger ?? NullLogger<AzureServiceBusTransport>.Instance);
+      (ILogger<AzureServiceBusTransport>?)logger ?? NullLogger<AzureServiceBusTransport>.Instance,
+      timeProvider: timeProvider);
     return (transport, client);
   }
 

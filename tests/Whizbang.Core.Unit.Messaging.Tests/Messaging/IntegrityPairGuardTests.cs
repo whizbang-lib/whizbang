@@ -110,6 +110,126 @@ public class IntegrityPairGuardTests {
     await Assert.That(guard.Pairs.Single().HaltedSince).IsNull();
   }
 
+  private static RuleFingerprint _peerOnRules(int semanticsVersion, int eligibilitySqlVersion) =>
+    RuleFingerprint.From(new RuleSet(semanticsVersion, eligibilitySqlVersion,
+      new Dictionary<string, string>(StringComparer.Ordinal) { [SHARED] = "a" }));
+
+  /// <summary>
+  /// #2588 (maintainer's decision on D2): all instances of one service deploy together, different services may not, so
+  /// two services on different rules versions are an expected state until both upgrade. The pair still compares nothing
+  /// (it is paused, so no false mismatch), but the pause is a Warning with its own metric, never the Error and the
+  /// Critical alert of a real halt; it ends with the first message from the upgraded peer.
+  /// </summary>
+  [Test]
+  [Arguments(0, -1)]
+  [Arguments(-1, 0)]
+  public async Task Admit_APeerOnAnotherRulesVersion_IsPausedWithAWarning_NotHaltedAsync(int semanticsDelta, int sqlDelta) {
+    var (guard, log, _, services) = _guard(new Rules((SHARED, "a")));
+    await using var owned = services;
+    var factory = services.GetRequiredService<IMeterFactory>();
+    using var pauses = new Recorder<long>(factory, "whizbang.stream_integrity.pair_rules_version_pauses");
+    using var halts = new Recorder<long>(factory, "whizbang.stream_integrity.pair_halts");
+    var olderPeer = _peerOnRules(RuleSemantics.VERSION + semanticsDelta, RuleSemantics.ELIGIBILITY_SQL_VERSION + sqlDelta);
+
+    var paused = guard.Admit(PEER, IntegrityPairSide.Consumer, olderPeer);
+    _ = guard.Admit(PEER, IntegrityPairSide.Consumer, olderPeer);
+    var resumed = guard.Admit(PEER, IntegrityPairSide.Consumer, _peer((SHARED, "a")));
+
+    await Assert.That(paused.IsAgreed).IsFalse().Because("a pair on two rules versions compares nothing, so nothing is falsely repaired");
+    await Assert.That(IntegrityPairGuard.IsRulesVersionPause(paused.Reason)).IsTrue();
+    await Assert.That(resumed.IsAgreed).IsTrue().Because("the pair resumes with the first message from the upgraded peer");
+    await Assert.That(log.Entries.Any(e => e.Level >= LogLevel.Error)).IsFalse()
+      .Because("an expected state between services that deploy separately is not an error");
+    var warning = log.Entries.Single(e => e.Level == LogLevel.Warning).Message;
+    await Assert.That(warning).Contains("paused").And.Contains("rules version")
+      .And.Contains($"eligibility SQL {RuleSemantics.ELIGIBILITY_SQL_VERSION}")
+      .Because("the operator sees which side runs which rules version, once per pause");
+    await Assert.That(log.Entries[^1].Level).IsEqualTo(LogLevel.Information).Because("the resumption is logged");
+    var counted = pauses.GetMeasurementSnapshot();
+    await Assert.That(counted.Count).IsEqualTo(1);
+    await Assert.That(counted[0].Tags["side"]).IsEqualTo("consumer");
+    await Assert.That(halts.GetMeasurementSnapshot()).IsEmpty().Because("a pause is not counted as a halt");
+  }
+
+  [Test]
+  public async Task Admit_APausePastTheThreshold_WarnsOnce_AndNeverRaisesTheCriticalHaltAlertAsync() {
+    var (guard, log, time, services) = _guard(new Rules((SHARED, "a")), TimeSpan.FromMinutes(30));
+    await using var owned = services;
+    var factory = services.GetRequiredService<IMeterFactory>();
+    using var pauseAlerts = new Recorder<long>(factory, "whizbang.stream_integrity.pair_rules_version_pause_alerts");
+    using var haltAlerts = new Recorder<long>(factory, "whizbang.stream_integrity.pair_halt_alerts");
+    var olderPeer = _peerOnRules(RuleSemantics.VERSION, RuleSemantics.ELIGIBILITY_SQL_VERSION - 1);
+    _ = guard.Admit(PEER, IntegrityPairSide.Origin, olderPeer);
+
+    time.Advance(TimeSpan.FromMinutes(30));
+    _ = guard.Admit(PEER, IntegrityPairSide.Origin, olderPeer);
+    _ = guard.Admit(PEER, IntegrityPairSide.Origin, olderPeer);
+
+    await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Critical)).IsFalse()
+      .Because("a rules-version pause is expected until both services upgrade, however long that takes");
+    await Assert.That(log.Entries.Count(e => e.Level == LogLevel.Warning && e.Message.Contains("still paused", StringComparison.Ordinal)))
+      .IsEqualTo(1).Because("a long pause is worth one reminder, at Warning");
+    await Assert.That(pauseAlerts.GetMeasurementSnapshot().Count).IsEqualTo(1);
+    await Assert.That(haltAlerts.GetMeasurementSnapshot()).IsEmpty();
+    await Assert.That(guard.Pairs.Single().Alerted).IsTrue();
+  }
+
+  [Test]
+  public async Task Admit_APauseOnAGuardWithoutMetrics_StillWarnsAndAlertsOnceAsync() {
+    var (guard, log, time, services) = _guard(new Rules((SHARED, "a")), TimeSpan.FromMinutes(30), withMetrics: false);
+    await using var owned = services;
+    var olderPeer = _peerOnRules(RuleSemantics.VERSION, RuleSemantics.ELIGIBILITY_SQL_VERSION - 1);
+    var paused = guard.Admit(PEER, IntegrityPairSide.Origin, olderPeer);
+
+    time.Advance(TimeSpan.FromMinutes(30));
+    _ = guard.Admit(PEER, IntegrityPairSide.Origin, olderPeer);
+
+    await Assert.That(IntegrityPairGuard.IsRulesVersionPause(paused.Reason)).IsTrue();
+    await Assert.That(log.Entries.Count(e => e.Level == LogLevel.Warning)).IsEqualTo(2)
+      .Because("a host without metrics still gets the pause and the one reminder, both at Warning");
+    await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Critical)).IsFalse();
+    await Assert.That(guard.Pairs.Single().Alerted).IsTrue();
+  }
+
+  [Test]
+  public async Task TheStateGauge_TellsAPauseFromAHaltAsync() {
+    var (guard, _, _, services) = _guard(new Rules((SHARED, "a")));
+    await using var owned = services;
+    using var state = new Recorder<long>(services.GetRequiredService<IMeterFactory>(), "whizbang.stream_integrity.pair_state");
+    _ = guard.Admit("paused-peer", IntegrityPairSide.Consumer, _peerOnRules(RuleSemantics.VERSION, RuleSemantics.ELIGIBILITY_SQL_VERSION - 1));
+    _ = guard.Admit("halted-peer", IntegrityPairSide.Consumer, _peer((SHARED, "b")));
+
+    state.RecordObservableInstruments();
+
+    var states = state.GetMeasurementSnapshot().ToDictionary(m => (string)m.Tags["peer"]!, m => (string)m.Tags["state"]!);
+    await Assert.That(states["paused-peer"]).IsEqualTo(IntegrityPairGuard.STATE_PAUSED);
+    await Assert.That(states["halted-peer"]).IsEqualTo(IntegrityPairGuard.STATE_HALTED);
+  }
+
+  /// <summary>
+  /// #2588: the pair keys on the rules library's own version track, never the package version. All a message carries
+  /// of its sender's rules is the rules versions, the fingerprint and each type's rule hash, so two services on
+  /// different package versions that run the same rules keep comparing: an ordinary upgrade pauses nothing.
+  /// </summary>
+  [Test]
+  public async Task TwoServicesOnDifferentPackagesWithTheSameRules_KeepComparing_AndTheWireCarriesNoPackageVersionAsync() {
+    var (guard, log, _, services) = _guard(new Rules((SHARED, "a")));
+    await using var owned = services;
+    var samePeerOnAnotherPackage = _peerOnRules(RuleSemantics.VERSION, RuleSemantics.ELIGIBILITY_SQL_VERSION);
+
+    var verdict = guard.Admit(PEER, IntegrityPairSide.Consumer, samePeerOnAnotherPackage);
+    var wire = System.Text.Json.JsonSerializer.Serialize(samePeerOnAnotherPackage,
+      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(RuleFingerprint)));
+    var fields = System.Text.Json.JsonElement.Parse(wire).EnumerateObject().Select(p => p.Name.ToUpperInvariant()).Order().ToList();
+
+    await Assert.That(verdict.IsAgreed).IsTrue();
+    await Assert.That(log.Entries).IsEmpty();
+    await Assert.That(fields).IsEquivalentTo(_ruleFingerprintFields)
+      .Because("a package version on the wire would pause every ordinary upgrade; the rules versions are what is compared");
+  }
+
+  private static readonly string[] _ruleFingerprintFields = ["ELIGIBILITYSQLVERSION", "FINGERPRINT", "SEMANTICSVERSION", "TYPES"];
+
   [Test]
   public async Task Admit_ADifferentSharedType_HaltsWithOneErrorNamingBothSidesAndTheTypeAsync() {
     var (guard, log, _, services) = _guard(new Rules((SHARED, "a")));

@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Whizbang.Core.Async;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Startup;
@@ -67,7 +68,11 @@ public sealed class StartupStageGate(ISchemaReadyGate schemaReady) : IStartupSta
   private static bool _bySchemaGate(StartupStage stage) => stage <= StartupStage.Coordinate;
 
   private static async Task _eitherAsync(Task reached, Task schemaReady, CancellationToken cancellationToken) {
-    await Task.WhenAny(reached, schemaReady).ConfigureAwait(false);
+    // The schema gate's wait ends with the caller's token, so a stop ends this wait through it, as before.
+    using var either = new WakeSet(TimeProvider.System, CancellationToken.None);
+    either.Add(reached);
+    either.Add(schemaReady);
+    await either.WaitAsync(Timeout.InfiniteTimeSpan).ConfigureAwait(false);
     cancellationToken.ThrowIfCancellationRequested();
   }
 }

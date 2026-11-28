@@ -450,6 +450,12 @@ public static class PostgresDriverExtensions {
         // <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, OriginPositionFillStep>(
           OriginPositionFillStep.FromServices));
+        // TURNKEY: an operator's exclusion of received events from integrity checks (#2588): the API, and the maintenance
+        // step that applies its queued requests in bounded batches under the maintainer duty, idle-gated.
+        // <docs>resilience/integrity-exclusions</docs>
+        selector.Services.TryAddSingleton<global::Whizbang.Core.Messaging.IIntegrityExclusions>(PostgresIntegrityExclusions.FromServices);
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, IntegrityExclusionStep>(
+          IntegrityExclusionStep.FromServices));
         // #1734: the scheduled disposition of sealed streams, on the same database as the archive store.
         selector.Services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamDispositionLedger>(sp =>
           new PostgresStreamDispositionLedger(sp.GetRequiredService<PostgresArchiveConnection>()));

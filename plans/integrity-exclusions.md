@@ -1,6 +1,8 @@
 # Integrity exclusions (#2588): design note
 
-Status: design, not implemented. Accepted by the maintainer as a feature; this note is the design that comes first.
+Status: implemented on feat/integrity-exclusions-2588 (migrations 662, 663). Decisions: D1 yes (enforced), D2 accept the
+pause (open question #2615), D3 no deficits (open question #2616), D4 no system event. Deviations from this note are
+listed at the end.
 Companion: the one-off repair of #2573 (migration 599, `WrittenHereOriginRestorationStep`) on the same branch.
 
 ## What it is
@@ -190,7 +192,7 @@ public sealed record IntegrityExclusionSelection {
   public IReadOnlyList<string>? EventTypes { get; init; }
   public DateTimeOffset? From { get; init; }            // created_at range
   public DateTimeOffset? Until { get; init; }
-  public IntegrityUnresolved? Unresolved { get; init; } // section 5
+  public IntegrityUnresolvedKinds? Unresolved { get; init; } // section 5
 }
 ```
 
@@ -226,7 +228,7 @@ host audits system events (decision D4).
 
 ## 5. The past: "everything currently unresolved older than X"
 
-`IntegrityUnresolved` is a flags enum over what the engine already knows, each a bounded indexed selection:
+`IntegrityUnresolvedKinds` is a flags enum over what the engine already knows, each a bounded indexed selection:
 
 | Flag | Source | Selection |
 | --- | --- | --- |
@@ -298,3 +300,25 @@ the compare-side helper across the receptors: 3. Selections, step, HTTP and API:
   origin), or should the first version mark only stored events and leave deficits counted?
 - **D4. System event.** Should a mark or unmark also be emitted as an audited framework system event, beside the log
   table?
+
+## As built: where the implementation differs from this note
+
+- **The rule's version 2 is its own pair of tokens** (`__DIGEST_ELIGIBLE_V2__`, `__INTEGRITY_COUNTED_V2__`). Changing the
+  version 1 constants' values would change the hash of every shipped migration that writes them and re-run them all,
+  data passes included; migration 662 redefines the 31 readers whole with the new tokens instead. Version 1 stays frozen
+  and is kept in `EligibilitySql` for #2615.
+- **No maintained adjustment table.** Its key includes the stream, so it would hold about one row per mark, and an epoch
+  key cannot answer a window that cuts an epoch. The marks table, indexed by (origin, state, type, origin position), is
+  read directly (`wh_integrity_exclusion_adjustment`). The per-origin counts live in `wh_integrity_exclusion_origins`.
+- **The compare pays one probe** per origin answer (an index probe that returns nothing for an origin with no marks),
+  not zero statements: a process-local "no exclusions" flag would be stale across instances and turn a fresh mark into
+  a mismatch.
+- **A positioned row settles as held at once**, from the origin position it already carries; only unpositioned rows
+  are asked. An origin that sends no bucket fields settles the mark with the stored row's bucket (every mark is of a
+  stored event under D3), rather than staying pending.
+- **Ledger rows of a marked bucket are removed**, not re-armed, so the repair drain never asks for an excluded event
+  before the next comparison.
+- **The held ask still reads the held index**; it leaves excluded rows out by a flag test instead of an index predicate
+  change (no index rebuild on the event store).
+- **Superseding events are refused** (their digest counts the key's slot). **Unhealed** reads stream buckets only.
+- **599's cursor is not read:** a row whose first hop names this service is refused whether or not the walk reached it.

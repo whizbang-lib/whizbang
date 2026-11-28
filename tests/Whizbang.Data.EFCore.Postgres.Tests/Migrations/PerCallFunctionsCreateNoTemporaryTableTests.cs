@@ -42,6 +42,10 @@ public partial class PerCallFunctionsCreateNoTemporaryTableTests {
     ["wh_normalize_aggregate_type_batch"] = "a one-time data migration (063), gated on its format version",
     ["wh_remove_rewind_lifecycle_events_batch"] = "a one-time data migration (210) that works through its batches once",
     ["wh_refile_events"] = "an operator's refile, run on request",
+    // #2588: an operator's integrity exclusion, applied on request or by its step only while a request is open.
+    ["wh_integrity_exclude"] = "an operator's integrity exclusion, run on request",
+    ["wh_integrity_unexclude"] = "an operator's integrity unexclusion, run on request",
+    ["wh_integrity_exclusion_apply_batch"] = "applies an operator's queued exclusion request; returns before any table while none is open",
   };
 
   [Test]

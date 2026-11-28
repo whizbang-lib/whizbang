@@ -203,17 +203,15 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
             if (remaining <= TimeSpan.Zero || batch.Count >= _options.StreamChannelCapacity) {
               break;
             }
-            // Race "next arrival" against a wall-clock delay using the injected TimeProvider
-            // so tests can advance the clock deterministically.
-            using var tickCts = CancellationTokenSource.CreateLinkedTokenSource(_stopCts.Token);
-            var arrivalTask = stream.Reader.WaitToReadAsync(tickCts.Token).AsTask();
-            var delayTask = Task.Delay(remaining, _timeProvider, tickCts.Token);
-            var winner = await Task.WhenAny(arrivalTask, delayTask).ConfigureAwait(false);
-            await tickCts.CancelAsync().ConfigureAwait(false);
-            if (winner == delayTask) {
+            // Race "next arrival" against the window's deadline on the injected TimeProvider, so tests can advance
+            // the clock deterministically. One wake set per wait: disposing it releases whichever lost.
+            using var tick = new Whizbang.Core.Async.WakeSet(_timeProvider, _stopCts.Token);
+            var arrival = tick.Add(stream.Reader);
+            var wake = await tick.WaitAsync(remaining).ConfigureAwait(false);
+            if (wake.IsTimeout) {
               break;
             }
-            if (!await StreamBatchWindow.ContinueBatchingAsync(arrivalTask).ConfigureAwait(false)) {
+            if (!await StreamBatchWindow.ContinueBatchingAsync(arrival.LastWait).ConfigureAwait(false)) {
               break; // channel completed, or shutdown observed while waiting for the next arrival
             }
           }
@@ -294,11 +292,10 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
 /// its own delay: keep batching, or stop.
 /// </summary>
 /// <remarks>
-/// Split out and internal because both answers are otherwise unassertable. The arrival wait and
-/// the window delay share one linked token, so a shutdown cancels them together and which one
-/// <see cref="Task.WhenAny"/> reports first is not something a test can pin down — yet the
-/// canceled answer has to close the window rather than escape, or a forced shutdown faults a
-/// stream worker that nobody awaits.
+/// Split out and internal because both answers are otherwise unassertable. A shutdown ends the
+/// window's wake set as stopped and cancels the arrival wait at once, so which a test sees is not
+/// something it can pin down, yet the canceled answer has to close the window rather than escape,
+/// or a forced shutdown faults a stream worker that nobody awaits.
 /// </remarks>
 internal static class StreamBatchWindow {
   /// <summary>

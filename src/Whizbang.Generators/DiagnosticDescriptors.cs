@@ -13,11 +13,12 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// Diagnostic IDs that have been retired: declared but never reported (#1427), or no longer needed (WHIZ810, #1911:
   /// a dictionary member is now stored as an array of key/value pairs, so nothing asks for the rewrite it suggested).
+  /// WHIZ611 (#2613) was folded into WHIZ612, which reports every wait raced by hand, not only channel waits.
   /// A retired ID is never given a new meaning, so a suppression or a search for it can never match something else.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/DiagnosticDescriptorsTests.cs:RetiredDiagnosticIds_AreNeverDeclaredAgainAsync</tests>
   public static readonly System.Collections.Immutable.ImmutableArray<string> RETIRED_IDS = [
-    "WHIZ003", "WHIZ005", "WHIZ017", "WHIZ020", "WHIZ023", "WHIZ042", "WHIZ050", "WHIZ051", "WHIZ052", "WHIZ057", "WHIZ803", "WHIZ810",
+    "WHIZ003", "WHIZ005", "WHIZ017", "WHIZ020", "WHIZ023", "WHIZ042", "WHIZ050", "WHIZ051", "WHIZ052", "WHIZ057", "WHIZ611", "WHIZ803", "WHIZ810",
   ];
 
   private const string CATEGORY = "Whizbang.SourceGeneration";

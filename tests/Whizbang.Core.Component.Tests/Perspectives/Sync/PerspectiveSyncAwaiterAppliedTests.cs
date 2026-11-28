@@ -12,6 +12,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Tests.Workers;
+using Whizbang.Testing.Async;
 
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 
@@ -80,6 +81,59 @@ public class PerspectiveSyncAwaiterAppliedTests {
     var result = await waiting;
     await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced)
       .Because("the worker in this process committed the apply; the ledger's flush can lag it");
+  }
+
+  /// <summary>
+  /// A local apply wins the race against the next ledger re-read and against the collective sink's signal. Both losers
+  /// are released when the wait returns, because the wait cancels its own token on the way out (loop-waits audit):
+  /// disposing the source alone would leave the re-read's delay pending on the clock and the sink's waiter registered
+  /// on the tracker until the event's sink apply, which may never come.
+  /// </summary>
+  [Test]
+  public async Task WaitForApplied_WonByALocalApply_LeavesNoDelayOnTheClockAndNoWaiterOnTheTrackerAsync() {
+    var eventId = Guid.CreateVersion7();
+    var ledger = new ScriptedLedger(new AppliedEventStatus(AppliedEventState.Pending, eventId));
+    var tracker = new SyncEventTracker();
+    var clock = new CountingTimeProvider(new FakeTimeProvider());
+    var awaiter = _awaiter(ledger, tracker, clock);
+
+    var waiting = awaiter.WaitForAppliedAsync(typeof(OrderPerspective), eventId, _timeout);
+    await ledger.WaitForReadAsync(1);
+    // Armed twice: the wait's timeout, then the re-read deadline once the read is back.
+    await clock.Armed(2);
+    var liveWhileWaiting = clock.LiveTimers;
+    var waitersWhileWaiting = tracker.AppliedWaiterCount;
+    tracker.MarkApplied([eventId], _name);
+    var result = await waiting;
+
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
+    await Assert.That(liveWhileWaiting).IsEqualTo(2)
+      .Because("the wait holds its timeout and the next re-read's deadline, and the counter must see them");
+    await Assert.That(waitersWhileWaiting).IsEqualTo(2)
+      .Because("the wait listens for the perspective's apply and the collective sink's, and the counter must see both");
+    await Assert.That(clock.LiveTimers).IsEqualTo(0)
+      .Because("the re-read delay that lost the race must be canceled when the wait returns");
+    await Assert.That(tracker.AppliedWaiterCount).IsEqualTo(0)
+      .Because("the sink waiter that lost the race must be released when the wait returns");
+  }
+
+  /// <summary>The ledger settles the wait on its first read: the in-process waiters it registered first are released.</summary>
+  [Test]
+  public async Task WaitForApplied_SettledByTheLedger_LeavesNoWaiterOnTheTrackerAsync() {
+    var eventId = Guid.CreateVersion7();
+    var ledger = new ScriptedLedger(new AppliedEventStatus(AppliedEventState.Applied, eventId));
+    var tracker = new SyncEventTracker();
+    var clock = new CountingTimeProvider(new FakeTimeProvider());
+    var awaiter = _awaiter(ledger, tracker, clock);
+
+    var result = await awaiter.WaitForAppliedAsync(typeof(OrderPerspective), eventId, _timeout);
+
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
+    await Assert.That(clock.CreatedTimers).IsEqualTo(2)
+      .Because("the wait armed its timeout, and the re-read's deadline before the read, as the ledger answered");
+    await Assert.That(clock.LiveTimers).IsEqualTo(0);
+    await Assert.That(tracker.AppliedWaiterCount).IsEqualTo(0)
+      .Because("both in-process waiters lost to the ledger and must be released when the wait returns");
   }
 
   [Test]
