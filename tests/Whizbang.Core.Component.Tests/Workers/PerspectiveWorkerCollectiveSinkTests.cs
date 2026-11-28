@@ -1516,7 +1516,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       CompositeMetrics? compositeMetrics = null, bool lockBusyCountsAsFailure = false,
       ISyncEventTracker? syncEventTracker = null, TimeProvider? timeProvider = null, int predecessorWaitSeconds = 30,
       PerspectiveMetrics? metrics = null, ILogger<PerspectiveWorker>? logger = null,
-      IReadOnlyList<PerspectiveFanOutEntry>? fanOuts = null) {
+      IReadOnlyList<PerspectiveFanOutEntry>? fanOuts = null, IFanOutLateApplyRewinds? lateApplyRewinds = null) {
     var instanceProvider = new InstanceProvider();
     var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
@@ -1538,6 +1538,9 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     }
     if (fanOuts is not null) {
       services.AddSingleton<IPerspectiveFanOutRegistry>(new FanOutRegistry(fanOuts));
+    }
+    if (lateApplyRewinds is not null) {
+      services.AddSingleton(lateApplyRewinds);
     }
     services.AddLogging();
     var sp = services.BuildServiceProvider();

@@ -29,7 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 [Category("Integration")]
 [Category("CollectiveEvents")]
 [Category("Shard3")]
-public class FanOutReplayIntegrationTests : EFCoreTestBase {
+public partial class FanOutReplayIntegrationTests : EFCoreTestBase {
   private const string PERSPECTIVE = "Whizbang.Data.EFCore.Postgres.Tests.Perspectives.FanOutReplayOrderPerspective";
   private const string TENANT = "tenant-fan-out-replay";
 
@@ -60,9 +60,11 @@ public class FanOutReplayIntegrationTests : EFCoreTestBase {
       var driver = new EFCoreEventStore<WorkCoordinationDbContext>(sp.GetRequiredService<WorkCoordinationDbContext>());
       return withArchive ? new ArchiveAwareEventStoreDecorator(driver, _archive(), readThrough: true) : driver;
     });
+    // The driver's database, as the driver registers it: the replay reads how far the sink applied each fan-out (#1970)
+    // through it, and the sink rewinds the rows it reached late (#2622).
+    var database = new PostgresArchiveConnection(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync, Schema: null);
+    services.AddSingleton(database);
     if (withArchive) {
-      var database = new PostgresArchiveConnection(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync, Schema: null);
-      services.AddSingleton(database);
       services.AddSingleton<IArchivedStreamExtents>(new PostgresArchivedStreamExtents(database));
     }
     if (withSnapshots) {
@@ -72,7 +74,6 @@ public class FanOutReplayIntegrationTests : EFCoreTestBase {
     services.AddScoped<IPerspectiveStore<FanOutReplayOrder>>(sp =>
       new EFCorePostgresPerspectiveStore<FanOutReplayOrder>(sp.GetRequiredService<WorkCoordinationDbContext>(), FanOutReplayOrderFanOut.TABLE));
     services.AddScoped<FanOutReplayOrderPerspective>();
-    services.AddSingleton<FanOutReplayOrderFanOut>();
 
     var asm = typeof(FanOutReplayIntegrationTests).Assembly;
     services.AddScoped(asm.GetTypes().Single(t => t.Name == "FanOutReplayOrderPerspectiveRunner"));
@@ -272,6 +273,12 @@ public class FanOutReplayIntegrationTests : EFCoreTestBase {
   // One of the order's own events, committed and then applied by its runner, as the drain applies it.
   private async Task<Guid> _ownAsync<TEvent>(ServiceProvider sp, Guid order, TEvent evt) where TEvent : IEvent {
     var id = await _appendAsync(sp, order, evt);
+    await _applyLiveAsync(sp, order);
+    return id;
+  }
+
+  // The order's events committed since its runner last applied it, applied as the drain applies a batch.
+  private async Task _applyLiveAsync(ServiceProvider sp, Guid order) {
     await using var scope = sp.CreateAsyncScope();
     var after = _liveCursor.GetValueOrDefault(order);
     var events = new List<MessageEnvelope<IEvent>>();
@@ -280,18 +287,31 @@ public class FanOutReplayIntegrationTests : EFCoreTestBase {
     }
     var runner = scope.ServiceProvider.GetRequiredService<IPerspectiveRunnerRegistry>().GetRunner(PERSPECTIVE, scope.ServiceProvider)!;
     _ = await runner.RunWithEventsAsync(order, PERSPECTIVE, after, events, CancellationToken.None);
-    _liveCursor[order] = id;
-    return id;
+    var last = events[^1].MessageId.Value;
+    _liveCursor[order] = last;
+    // The cursor the drain's completion moves, so a rewind has a cursor to flag.
+    await _executeAsync(
+      "INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status) "
+      + $"VALUES ('{order}', '{PERSPECTIVE}', '{last}', 1) "
+      + "ON CONFLICT (stream_id, perspective_name) DO UPDATE SET last_event_id = EXCLUDED.last_event_id");
   }
 
   // A rename of the customer, committed and then applied by the collective sink's set-based update.
   private async Task _renameAsync(ServiceProvider sp, Guid customer, string name) {
     var rename = new FanOutReplayCustomerRenamed { CustomerId = customer, Name = name };
     var id = await _appendAsync(sp, customer, rename);
+    await _sinkAppliesAsync(sp, customer, rename, id);
+  }
+
+  // The collective sink's apply of a rename committed earlier.
+  private static async Task _sinkAppliesAsync(ServiceProvider sp, Guid customer, FanOutReplayCustomerRenamed rename, Guid id) {
     await using var scope = sp.CreateAsyncScope();
     var dispatcher = scope.ServiceProvider.GetRequiredService<ICollectiveDispatcher>();
     _ = await dispatcher.DispatchAsync(
       PerspectiveFanOutEntry.CollectiveEventFor(rename, customer, TENANT), id, scope.ServiceProvider.GetRequiredService<WorkCoordinationDbContext>());
+    // What the sink does after each fan-out it applies (#2622).
+    _ = await scope.ServiceProvider.GetRequiredService<IFanOutLateApplyRewinds>().RewindRowsAppliedLateAsync(
+      FanOutReplayOrderFanOut.Renamed, customer, TENANT, id, CancellationToken.None);
   }
 
   private Task<Guid> _appendRenameAsync(ServiceProvider sp, Guid customer, string name) =>

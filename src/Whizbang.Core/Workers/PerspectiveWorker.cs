@@ -414,6 +414,8 @@ public partial class PerspectiveWorker(
   // #2620: the foreign event types this host's perspectives fan out (IPerspectiveFanOutRegistry), read once at startup.
   // Their __collective__ rows are applied by the sink, as a collective's are, through ICollectiveDispatcher.
   private HashSet<Type> _fanOutEventTypes = [];
+  // #2622: the fan-outs themselves, so the sink asks each one of an applied event's type to rewind the rows it reached late.
+  private IReadOnlyList<PerspectiveFanOutEntry> _fanOutEntries = [];
   private HashSet<string> _fanOutEventTypeNames = new(StringComparer.Ordinal);
 
 
@@ -1008,7 +1010,8 @@ public partial class PerspectiveWorker(
   /// </summary>
   private async Task<bool> _initializePerspectiveRegistryAsync() {
     await using var startupScope = _scopeFactory.CreateAsyncScope();
-    _fanOutEventTypes = [.. startupScope.ServiceProvider.GetPerspectiveFanOutEntries().Select(e => e.EventType)];
+    _fanOutEntries = startupScope.ServiceProvider.GetPerspectiveFanOutEntries();
+    _fanOutEventTypes = [.. _fanOutEntries.Select(e => e.EventType)];
     _fanOutEventTypeNames = new(
       _fanOutEventTypes.Select(t => EventTypeMatchingHelper.NormalizeTypeName(TypeNameFormatter.Format(t))), StringComparer.Ordinal);
     var registry = startupScope.ServiceProvider.GetService<IPerspectiveRunnerRegistry>();
@@ -3735,6 +3738,7 @@ public partial class PerspectiveWorker(
           cancellationToken: cancellationToken)
           .ConfigureAwait(false);
         changes[envelope.MessageId.Value] = MessageChanges.ForCollective(dispatched.ChangedProperties);
+        await _rewindRowsAppliedLateAsync(scope, collectiveEvent, envelope.MessageId.Value, cancellationToken).ConfigureAwait(false);
       } catch (CollectiveApplyLockBusyException busy) when (!_options.CollectiveLockBusyCountsAsFailure) {
         // Busy, not failed (#964): another batch holds the apply lock for the same table and scope, and this one
         // waited out every renewal of its bounded wait. Nothing is wrong with the event, so no failure is reported
@@ -3794,6 +3798,42 @@ public partial class PerspectiveWorker(
     await _completeAppliedCollectivesAsync(
       scope, workCoordinator, streamId, new AppliedCollectives(applied, changes), completedWorkIds, reportCursor: true, cancellationToken)
       .ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// After a fan-out's apply commits (#2622), asks each fan-out of the event's type to rewind the rows the apply reached
+  /// that had already folded an own event committed after it, so each live row comes out as its replay. A failure here
+  /// is a sink failure, as a failed apply is: the retry resumes after what committed (#1969) and asks again.
+  /// A host whose driver registers no rewinds leaves every row as the apply left it.
+  /// </summary>
+  private async Task _rewindRowsAppliedLateAsync(
+      AsyncServiceScope scope, ICollectiveEvent applied, Guid eventId, CancellationToken cancellationToken) {
+    if (applied is not FanOutCollectiveEvent fanOut
+        || scope.ServiceProvider.GetService<IFanOutLateApplyRewinds>() is not { } rewinds) {
+      return;
+    }
+    var target = (FanOutScope)fanOut.Scope;
+    foreach (var entry in _fanOutEntries.Where(e => e.EventType == target.EventType)) {
+      await rewinds.RewindRowsAppliedLateAsync(entry, target.StreamId, target.TenantId, eventId, cancellationToken)
+        .ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>
+  /// Signals each perspective a fanned-out event targets that the event is applied (#2637): once its set-based apply has
+  /// committed, every row it reaches holds it, so a sync wait on the perspective for the event completes, however many
+  /// rows it changed, none included. Marked applied and processed under each fan-out's perspective, as a perspective's
+  /// own completion marks the events it folded.
+  /// </summary>
+  private void _signalFanOutPerspectivesApplied(List<MessageEnvelope<IEvent>> applied) {
+    foreach (var envelope in applied.Where(static e => e.Payload is FanOutCollectiveEvent)) {
+      Guid[] eventId = [envelope.MessageId.Value];
+      var eventType = ((FanOutCollectiveEvent)envelope.Payload).Event.GetType();
+      foreach (var perspectiveName in _fanOutEntries.Where(e => e.EventType == eventType).Select(e => e.PerspectiveName).Distinct(StringComparer.Ordinal)) {
+        _syncEventTracker.MarkApplied(eventId, perspectiveName);
+        _syncEventTracker.MarkProcessedByPerspective(eventId, perspectiveName);
+      }
+    }
   }
 
   /// <summary>Whether the collective sink can run; logs what is missing when it cannot.</summary>
@@ -3987,6 +4027,9 @@ public partial class PerspectiveWorker(
     // same here or claim_orphaned re-leases the row forever and re-dispatches the whole-cohort UPDATE — a
     // production death spiral (re-dispatch loop → ~95% table bloat → lock convoy).
     _completeCollectiveSinkWorkRows(workIds);
+
+    // #2637: a fanned-out event's apply is the targeted perspectives' too, so a sync wait on one of them is answered here.
+    _signalFanOutPerspectivesApplied(applied);
 
     // The apply is now durably complete. A collective event has no per-stream runner, so it never reaches
     // the normal PostAllPerspectives gate — but the apply finishing IS its "all perspectives complete"

@@ -57,6 +57,13 @@ public sealed record PerspectiveFanOutEntry(
   public Func<ICollectiveInMemoryExecutorFactory, ICollectiveInMemoryExecutor>? CreateInMemoryExecutor { get; init; }
 
   /// <summary>
+  /// The name the cursors of the rows this fan-out targets are kept under: its perspective's, in the CLR form the
+  /// perspective's runner records (#2622).
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveFanOutContractTests.cs:Entry_PerspectiveName_IsThePerspectivesClrNameAsync</tests>
+  public string PerspectiveName => TypeNameFormatter.GetPerspectiveName(PerspectiveType);
+
+  /// <summary>
   /// The stable identity of this fan-out: the perspective, its <c>Apply</c> for the event, and the model. Built from names,
   /// so it survives a restart and a redeploy, as <see cref="CollectiveApplyEntry.EntryKey"/> does.
   /// </summary>

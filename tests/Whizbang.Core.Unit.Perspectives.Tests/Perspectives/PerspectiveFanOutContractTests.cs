@@ -72,6 +72,13 @@ public class PerspectiveFanOutContractTests {
       .Because("one perspective has one Apply per foreign event, so the event is part of what tells two fan-outs apart");
   }
 
+  // #2622: the sink rewinds a row by its cursor, kept under the perspective's CLR name, a nested type's with its '+'.
+  [Test]
+  public async Task Entry_PerspectiveName_IsThePerspectivesClrNameAsync() {
+    await Assert.That(_entry().PerspectiveName)
+      .IsEqualTo("Whizbang.Core.Tests.Perspectives.PerspectiveFanOutContractTests+OrderSummaryProjection");
+  }
+
   [Test]
   public async Task Entry_Invoker_CallsThePerspectivesSetForTheEventAsync() {
     var entry = _entry();

@@ -1394,11 +1394,22 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     // #2621: a rebuild of a row a fan-out targets folds the foreign events of the streams its keys take, in commit order
     // with its own. A rebuild folds the row from its first event, so each key an event sets brings the fan-outs of its
     // stream committed after that event in.
-    if (_foldsFanOutsOnReplay()) {
+    // #2622: a live batch does the same, so the row comes out as its replay: the sink may already have applied a fan-out
+    // committed after one of the batch's events, to the row before that event (a key the row held), or to no row (a key
+    // the event gives it). Each such fan-out the sink has applied folds again after the event; one it has not, it applies
+    // after this write, which is its place in commit order too.
+    if (_modelHasFanOuts()) {
+      var replaying = _replaying();
       var fold = new global::System.Collections.Generic.List<MessageEnvelope<IEvent>>(_skipToUnconditionalPurge(state, events));
+      var keys = new FanOutKeys();
+      if (!replaying && fold.Count > 0) {
+        await _mergeTakenFanOutsAsync(fold, 0, state.UpdatedModel, keys, _takenAt(fold[0]), admit: null, cancellationToken);
+      }
       await _foldWithFanOutsAsync(
-          state, fold, new FanOutKeys(), enableEventSpans, appliedEventTypes, throughLastOwnEvent: false, cancellationToken);
-      state.Events = fold;
+          state, fold, keys, enableEventSpans, appliedEventTypes, throughLastOwnEvent: false, cancellationToken);
+      if (replaying) {
+        state.Events = fold;
+      }
     } else {
       _foldEvents(state, events, enableEventSpans, appliedEventTypes, cancellationToken);
     }
@@ -1545,13 +1556,9 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     }
   }
 
-  /// <summary>
-  /// Whether this fold is a rebuild or rewind of a row a fan-out targets (#2621): only a replay folds foreign events into
-  /// the row; the live drain gets them from the collective sink's set-based update.
-  /// </summary>
-  private bool _foldsFanOutsOnReplay() =>
-    global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild or global::Whizbang.Core.Messaging.ProcessingMode.Replay
-    && _modelHasFanOuts();
+  /// <summary>Whether this fold is a rebuild or a replay, as opposed to the live drain.</summary>
+  private static bool _replaying() =>
+    global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild or global::Whizbang.Core.Messaging.ProcessingMode.Replay;
 
   /// <summary>Whether a perspective declares a fan-out to this runner's model (#2621), asked of the replay applier.</summary>
   private bool _modelHasFanOuts() => _collectiveReplayApplier?.FoldsFanOutsInto(typeof(TModel)) == true;
@@ -1758,6 +1765,11 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       state.HasWrittenUpdate = true;
       // #1970: a collective still in flight may yet reach the row live, so this run's snapshot would not say what it holds.
       state.CollectiveInFlight |= _collectiveReplayApplier.IsInFlight(envelope.Payload);
+    }
+    // #2622: a fan-out a live batch folds again is the sink's to report, not this batch's: it is no event of the row's, so
+    // it is not processed here, and the batch's stages and completion name only the row's own events.
+    if (envelope.Payload is global::Whizbang.Core.Perspectives.FanOutCollectiveEvent && !_replaying()) {
+      return;
     }
     state.ProcessedEvents.Add(envelope);
     state.EventsProcessed++;

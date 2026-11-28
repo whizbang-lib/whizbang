@@ -37,6 +37,14 @@ public class FanOutReplayOrderPerspective :
     Status = currentData.Status,
   };
 
+  /// <summary>
+  /// The fan-out's set-based change, as <c>IPerspectiveFanOutFor.Apply</c> returns it, on the perspective whose rows it
+  /// targets, as a declared fan-out is (so the rows' cursors are kept under this perspective's name).
+  /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits.")]
+  public ICollectiveSpec<FanOutReplayOrder> Apply(FanOutReplayCustomerRenamed e) =>
+    new FanOutReplayOrderFanOut.Spec(s => s.SetProperty(o => o.CustomerName, e.Name));
+
   /// <summary>Shipping changes the status alone.</summary>
   public FanOutReplayOrder Apply(FanOutReplayOrder currentData, FanOutReplayOrderShipped @event) => new() {
     Id = currentData.Id,
@@ -87,25 +95,21 @@ public record FanOutReplayCustomerRenamed : IEvent {
   public required string Name { get; init; }
 }
 
-/// <summary>The fan-out's set-based change, as <c>IPerspectiveFanOutFor.Apply</c> returns it.</summary>
-public sealed class FanOutReplayOrderFanOut {
+/// <summary>The fan-out entry the generator would emit for the perspective.</summary>
+public static class FanOutReplayOrderFanOut {
   /// <summary>The order table, as the schema names it.</summary>
   public const string TABLE = "wh_per_fan_out_replay_order";
 
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits.")]
-  public ICollectiveSpec<FanOutReplayOrder> Apply(FanOutReplayCustomerRenamed e) =>
-    new Spec(s => s.SetProperty(o => o.CustomerName, e.Name));
-
-  private sealed record Spec(Expression<Action<ICollectiveSetters<FanOutReplayOrder>>> Setters) : ICollectiveSpec<FanOutReplayOrder>;
+  internal sealed record Spec(Expression<Action<ICollectiveSetters<FanOutReplayOrder>>> Setters) : ICollectiveSpec<FanOutReplayOrder>;
 
   /// <summary>What the generator emits for <c>IPerspectiveFanOutFor&lt;FanOutReplayOrder, FanOutReplayCustomerRenamed&gt;</c>.</summary>
   public static readonly PerspectiveFanOutEntry Renamed = new(
-    PerspectiveType: typeof(FanOutReplayOrderFanOut),
+    PerspectiveType: typeof(FanOutReplayOrderPerspective),
     ModelType: typeof(FanOutReplayOrder),
     EventType: typeof(FanOutReplayCustomerRenamed),
     KeyProperty: nameof(FanOutReplayOrder.CustomerId),
     KeyColumn: "customer_id",
-    Invoker: static (perspective, evt) => ((FanOutReplayOrderFanOut)perspective).Apply((FanOutReplayCustomerRenamed)evt),
+    Invoker: static (perspective, evt) => ((FanOutReplayOrderPerspective)perspective).Apply((FanOutReplayCustomerRenamed)evt),
     KeySelector: (Expression<Func<FanOutReplayOrder, object?>>)(row => row.CustomerId),
     TableName: TABLE,
     CreateExecutor: static factory => factory.Create<FanOutReplayOrder>(TABLE)) {
